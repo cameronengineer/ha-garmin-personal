@@ -33,7 +33,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from custom_components.garmin_personal.api import GarminPersonalApi  # noqa: E402
-from custom_components.garmin_personal.const import BASE_URLS, WEIGHT_LOOKBACK_DAYS  # noqa: E402
+from custom_components.garmin_personal.const import (  # noqa: E402
+    BASE_URLS,
+    RECENT_ACTIVITIES_LIMIT,
+    VO2_LOOKBACK_DAYS,
+    WEIGHT_LOOKBACK_DAYS,
+)
 from custom_components.garmin_personal.coordinator import GarminData  # noqa: E402
 from custom_components.garmin_personal.diagnostics import TO_REDACT  # noqa: E402
 from custom_components.garmin_personal.parsing import latest_weigh_in  # noqa: E402
@@ -79,42 +84,72 @@ async def main() -> None:
             print(f"Key expires at {token.key_expires_at.isoformat()}")
 
         calls = {
-            "profile": api.async_get_profile_settings(),
-            "summary": api.async_get_daily_summary(today),
-            "sleep": api.async_get_daily_sleep(today),
-            "hrv": api.async_get_hrv(today),
-            "weight": api.async_get_weight_range(
+            "profile": lambda: api.async_get_profile_settings(),
+            "summary": lambda: api.async_get_daily_summary(today),
+            "heart_rate": lambda: api.async_get_daily_heart_rate(today),
+            "sleep": lambda: api.async_get_daily_sleep(today),
+            "hrv": lambda: api.async_get_hrv(today),
+            "weight": lambda: api.async_get_weight_range(
                 today - timedelta(days=WEIGHT_LOOKBACK_DAYS), today
             ),
-            "activity": api.async_get_latest_activity(),
+            "activities": lambda: api.async_search_activities(limit=RECENT_ACTIVITIES_LIMIT),
+            "body_battery": lambda: api.async_get_body_battery_report(today),
+            "spo2": lambda: api.async_get_spo2(today),
+            "food": lambda: api.async_get_food_logs(today),
+            "menstrual": lambda: api.async_get_menstrual_day(today),
+            "vo2_max": lambda: api.async_get_vo2_max(
+                today - timedelta(days=VO2_LOOKBACK_DAYS), today
+            ),
+            "fitness_age": lambda: api.async_get_fitness_age(today),
+            "hr_zones": lambda: api.async_get_heart_rate_zones(),
+            "weight_goal": lambda: api.async_get_weight_goal(today, today),
         }
         raw: dict[str, Any] = {}
         for name, call in calls.items():
             try:
-                raw[name] = await call
-                status = "ok" if raw[name] is not None else "empty"
+                raw[name] = await call()
+                status = "ok" if raw[name] not in (None, []) else "empty"
             except Exception as err:  # noqa: BLE001 - report everything
                 raw[name] = None
                 status = f"ERROR {err}"
-            print(f"  {name:9} {status}")
+            print(f"  {name:13} {status}")
             (out_dir / f"{name}.json").write_text(
                 json.dumps(redact(raw[name]), indent=2, default=str), encoding="utf-8"
             )
 
+        latest = (raw.get("activities") or [None])[0]
+        if latest:
+            try:
+                archive = await api.async_download_activity(latest["activityId"])
+                print(
+                    f"  {'fit_download':13} ok ({len(archive)} bytes, zip={archive[:2] == b'PK'})"
+                )
+            except Exception as err:  # noqa: BLE001
+                print(f"  {'fit_download':13} ERROR {err}")
+
     data = GarminData(
         day=today.isoformat(),
         summary=raw["summary"],
+        heart_rate=raw["heart_rate"],
         sleep=raw["sleep"],
         hrv=raw["hrv"],
         weigh_in=latest_weigh_in(raw["weight"]),
-        activity=raw["activity"],
+        activities=raw["activities"] or [],
+        body_battery=raw["body_battery"],
+        spo2=raw["spo2"],
+        food=raw["food"],
+        menstrual=raw["menstrual"],
+        vo2_max=raw["vo2_max"] or [],
+        fitness_age=raw["fitness_age"],
+        hr_zones=raw["hr_zones"] or [],
+        weight_goal=raw["weight_goal"],
         token_expires_at=token.expires_at,
     )
     print("\nWhat each sensor would show:")
     for desc in SENSORS:
         value = desc.value_fn(data)
         unit = desc.native_unit_of_measurement or ""
-        print(f"  {desc.key:28} {value!s:>28} {unit}")
+        print(f"  {desc.key:28} {value!s:>32} {unit}")
     sleep_keys = sorted((raw.get("sleep") or {}).get("sleepScores") or {})
     print(f"\nsleepScores keys from Garmin: {sleep_keys}")
     print(f"Raw (redacted) responses saved in {out_dir}/")

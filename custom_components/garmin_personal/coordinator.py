@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 import logging
@@ -17,9 +18,12 @@ from homeassistant.util import dt as dt_util
 from .api import GarminApiError, GarminAuthError, GarminPersonalApi, GarminRateLimitError
 from .const import (
     CONF_SCAN_INTERVAL,
+    DAILY_DATA_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    RECENT_ACTIVITIES_LIMIT,
     SLOW_DATA_INTERVAL,
+    VO2_LOOKBACK_DAYS,
     WEIGHT_LOOKBACK_DAYS,
 )
 from .parsing import latest_weigh_in
@@ -31,21 +35,44 @@ type GarminConfigEntry = ConfigEntry[GarminCoordinator]
 
 @dataclass
 class GarminData:
-    """Everything the sensors read from, refreshed by the coordinator."""
+    """Everything the entities read from, refreshed by the coordinator."""
 
     day: str | None = None
+    # Every update
     summary: dict[str, Any] | None = None
+    heart_rate: dict[str, Any] | None = None
+    # Hourly
     sleep: dict[str, Any] | None = None
     hrv: dict[str, Any] | None = None
     weigh_in: dict[str, Any] | None = None
-    activity: dict[str, Any] | None = None
+    activities: list[dict[str, Any]] = field(default_factory=list)
+    body_battery: dict[str, Any] | None = None
+    spo2: dict[str, Any] | None = None
+    food: dict[str, Any] | None = None
+    menstrual: dict[str, Any] | None = None
+    # Every few hours
+    vo2_max: list[dict[str, Any]] = field(default_factory=list)
+    fitness_age: dict[str, Any] | None = None
+    hr_zones: list[dict[str, Any]] = field(default_factory=list)
+    weight_goal: dict[str, Any] | None = None
+
     token_expires_at: datetime | None = None
     slow_updated_at: datetime | None = None
+    daily_updated_at: datetime | None = None
     errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def activity(self) -> dict[str, Any] | None:
+        """The most recent activity."""
+        return self.activities[0] if self.activities else None
+
+
+# Fields that belong to one calendar day and must not survive midnight.
+_DAY_FIELDS = ("heart_rate", "sleep", "hrv", "body_battery", "spo2", "food", "menstrual")
 
 
 class GarminCoordinator(DataUpdateCoordinator[GarminData]):
-    """Fetch the daily summary often and the slower-moving data hourly."""
+    """Fetch today's summary often, and slower-moving data less often."""
 
     config_entry: GarminConfigEntry
 
@@ -70,27 +97,28 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
         today = now.date()
         new_day = previous.day != today.isoformat()
 
-        data = GarminData(
-            day=today.isoformat(),
-            # Carry the slow data over unless it is due (or the day rolled over,
-            # in which case yesterday's sleep/HRV no longer apply).
-            sleep=None if new_day else previous.sleep,
-            hrv=None if new_day else previous.hrv,
-            weigh_in=previous.weigh_in,
-            activity=previous.activity,
-            slow_updated_at=None if new_day else previous.slow_updated_at,
-        )
+        # Start from the previous data so values not due for a refresh are kept.
+        data = GarminData(**{k: getattr(previous, k) for k in previous.__dataclass_fields__})
+        data.day = today.isoformat()
+        data.errors = {}
+        if new_day:
+            for name in _DAY_FIELDS:
+                setattr(data, name, None)
+            data.slow_updated_at = None
 
         try:
-            # The daily summary is the one call whose failure fails the update.
+            # Today's summary is the one call whose failure fails the update.
             data.summary = await self.api.async_get_daily_summary(today)
-
-            slow_due = (
-                data.slow_updated_at is None or now - data.slow_updated_at >= SLOW_DATA_INTERVAL
+            await self._async_fetch(
+                data, {"heart_rate": lambda: self.api.async_get_daily_heart_rate(today)}
             )
-            if slow_due:
-                await self._async_update_slow(data, today)
+
+            if _due(data.slow_updated_at, now, SLOW_DATA_INTERVAL):
+                await self._async_fetch(data, self._slow_calls(today))
                 data.slow_updated_at = now
+            if _due(data.daily_updated_at, now, DAILY_DATA_INTERVAL):
+                await self._async_fetch(data, self._daily_calls(today))
+                data.daily_updated_at = now
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except GarminRateLimitError as err:
@@ -103,34 +131,51 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
         self._check_key_expiry(token.key_expires_at if token else None)
         return data
 
-    async def _async_update_slow(self, data: GarminData, today: date) -> None:
-        """Refresh sleep, HRV, weight and activity; one failing doesn't stop the rest."""
-        calls = {
-            "sleep": lambda: self.api.async_get_daily_sleep(today),
-            "hrv": lambda: self.api.async_get_hrv(today),
-            "weight": lambda: self.api.async_get_weight_range(
+    def _slow_calls(self, today: date) -> dict[str, Callable[[], Awaitable[Any]]]:
+        api = self.api
+        return {
+            "sleep": lambda: api.async_get_daily_sleep(today),
+            "hrv": lambda: api.async_get_hrv(today),
+            "weigh_in": lambda: api.async_get_weight_range(
                 today - timedelta(days=WEIGHT_LOOKBACK_DAYS), today
             ),
-            "activity": self.api.async_get_latest_activity,
+            "activities": lambda: api.async_search_activities(limit=RECENT_ACTIVITIES_LIMIT),
+            "body_battery": lambda: api.async_get_body_battery_report(today),
+            "spo2": lambda: api.async_get_spo2(today),
+            "food": lambda: api.async_get_food_logs(today),
+            "menstrual": lambda: api.async_get_menstrual_day(today),
         }
+
+    def _daily_calls(self, today: date) -> dict[str, Callable[[], Awaitable[Any]]]:
+        api = self.api
+        return {
+            "vo2_max": lambda: api.async_get_vo2_max(
+                today - timedelta(days=VO2_LOOKBACK_DAYS), today
+            ),
+            "fitness_age": lambda: api.async_get_fitness_age(today),
+            "hr_zones": api.async_get_heart_rate_zones,
+            "weight_goal": lambda: api.async_get_weight_goal(today, today),
+        }
+
+    async def _async_fetch(
+        self, data: GarminData, calls: dict[str, Callable[[], Awaitable[Any]]]
+    ) -> None:
+        """Run each call; one failing keeps its previous value and doesn't stop the rest."""
         for name, call in calls.items():
             try:
                 result = await call()
             except GarminAuthError:
                 raise
             except GarminApiError as err:
-                # Keep the previous value; the next slow refresh will retry.
                 _LOGGER.debug("Garmin %s update failed: %s", name, err)
                 data.errors[name] = str(err)
                 continue
-            if name == "sleep":
-                data.sleep = result
-            elif name == "hrv":
-                data.hrv = result
-            elif name == "weight":
-                data.weigh_in = latest_weigh_in(result) or data.weigh_in
-            elif name == "activity":
-                data.activity = result or data.activity
+            if name == "weigh_in":
+                # An empty window shouldn't erase a weigh-in we already know about.
+                result = latest_weigh_in(result) or data.weigh_in
+            elif name == "activities" and not result:
+                result = data.activities
+            setattr(data, name, result)
 
     def _check_key_expiry(self, key_expires_at: datetime | None) -> None:
         """Raise a repair issue once Garmin tells us the API key is about to end.
@@ -154,3 +199,7 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
                 "expires": dt_util.as_local(key_expires_at).strftime("%Y-%m-%d %H:%M"),
             },
         )
+
+
+def _due(last: datetime | None, now: datetime, interval: timedelta) -> bool:
+    return last is None or now - last >= interval

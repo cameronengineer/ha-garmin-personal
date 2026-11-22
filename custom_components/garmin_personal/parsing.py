@@ -137,3 +137,187 @@ def lower_label(value: Any) -> str | None:
         return None
     label = value.strip().lower()
     return None if label in _EMPTY_LABELS else label
+
+
+def latest_reading(values: Any) -> tuple[datetime, float] | None:
+    """Newest non-null ``[timestamp_ms, value]`` pair from a Garmin readings array."""
+    if not isinstance(values, list):
+        return None
+    for row in reversed(values):
+        if isinstance(row, list) and len(row) >= 2 and isinstance(row[1], (int, float)):
+            when = parse_timestamp(row[0])
+            if when is not None and not isinstance(row[1], bool) and row[1] >= 0:
+                return when, row[1]
+    return None
+
+
+def default_zones(zones: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """The DEFAULT-sport heart-rate zone set (or the first one listed)."""
+    if not zones:
+        return None
+    for zone_set in zones:
+        if isinstance(zone_set, dict) and zone_set.get("sport") == "DEFAULT":
+            return zone_set
+    first = zones[0]
+    return first if isinstance(first, dict) else None
+
+
+def heart_rate_zone(bpm: float | None, zones: dict[str, Any] | None) -> int | None:
+    """Which zone (0-5) a heart rate falls in; 0 is below zone 1."""
+    if bpm is None or not zones:
+        return None
+    floors = [zones.get(f"zone{i}Floor") for i in range(1, 6)]
+    if not all(isinstance(f, (int, float)) for f in floors):
+        return None
+    zone = 0
+    for i, floor in enumerate(floors, start=1):
+        if bpm >= floor:
+            zone = i
+    return zone
+
+
+def latest_vo2_max(entries: list[dict[str, Any]] | None, sport: str) -> float | None:
+    """Most recent VO2 max for ``sport`` ("generic" = running/walking, "cycling")."""
+    best: tuple[str, float] | None = None
+    for entry in entries or []:
+        item = dig(entry, sport)
+        if not isinstance(item, dict):
+            continue
+        value = item.get("vo2MaxPreciseValue") or item.get("vo2MaxValue")
+        when = item.get("calendarDate") or ""
+        if isinstance(value, (int, float)) and value > 0 and (best is None or when >= best[0]):
+            best = (when, float(value))
+    return round(best[1], 1) if best else None
+
+
+def weight_goal_kg(goal: dict[str, Any] | None) -> float | None:
+    """Current target weight in kg (the API returns grams)."""
+    goals = dig(goal, "userGoals")
+    if not isinstance(goals, list):
+        return None
+    for item in reversed(goals):
+        if isinstance(item, dict):
+            kg = weight_kg(item.get("goalValue"))
+            if kg is not None:
+                return kg
+    return None
+
+
+def activity_start(activity: dict[str, Any] | None) -> datetime | None:
+    """When an activity started (UTC)."""
+    if not activity:
+        return None
+    return parse_timestamp(activity.get("beginTimestamp")) or parse_timestamp(
+        activity.get("startTimeGMT")
+    )
+
+
+def activity_seconds(activity: dict[str, Any] | None) -> float | None:
+    """How long an activity lasted, in seconds (elapsed, falling back to timer)."""
+    if not activity:
+        return None
+    for key in ("elapsedDuration", "duration", "movingDuration"):
+        value = activity.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value)
+    return None
+
+
+def activity_type(activity: dict[str, Any] | None) -> str | None:
+    """The activity's type key, e.g. "running" or "strength_training"."""
+    return dig(activity, "activityType", "typeKey") or dig(activity, "activityTypeDTO", "typeKey")
+
+
+def activity_summary(activity: dict[str, Any] | None) -> dict[str, Any]:
+    """Human-useful fields of an activity, without GPS or social data."""
+    if not activity:
+        return {}
+    start = activity_start(activity)
+    seconds = activity_seconds(activity)
+    distance = activity.get("distance")
+    out = {
+        "activity_id": activity.get("activityId"),
+        "name": activity.get("activityName"),
+        "activity_type": activity_type(activity),
+        "start_time": start.isoformat() if start else None,
+        "duration_minutes": round(seconds / 60, 1) if seconds else None,
+        "distance_km": round(distance / 1000, 2)
+        if isinstance(distance, (int, float)) and distance > 0
+        else None,
+        "calories": activity.get("calories"),
+        "average_hr": activity.get("averageHR"),
+        "max_hr": activity.get("maxHR"),
+        "elevation_gain_m": activity.get("elevationGain"),
+        "steps": activity.get("steps"),
+        "aerobic_training_effect": activity.get("aerobicTrainingEffect"),
+        "anaerobic_training_effect": activity.get("anaerobicTrainingEffect"),
+        "training_effect_label": lower_label(activity.get("trainingEffectLabel")),
+        "training_load": activity.get("activityTrainingLoad"),
+        "body_battery_impact": activity.get("differenceBodyBattery"),
+        "moderate_intensity_minutes": activity.get("moderateIntensityMinutes"),
+        "vigorous_intensity_minutes": activity.get("vigorousIntensityMinutes"),
+        "personal_record": activity.get("isPR") or activity.get("pr") or None,
+    }
+    for zone in range(1, 6):
+        value = activity.get(f"hrTimeInZone_{zone}")
+        if isinstance(value, (int, float)) and value > 0:
+            out[f"minutes_in_hr_zone_{zone}"] = round(value / 60, 1)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def activities_since(
+    activities: list[dict[str, Any]] | None, since: datetime
+) -> list[dict[str, Any]]:
+    """Activities that started at or after ``since``."""
+    out = []
+    for activity in activities or []:
+        start = activity_start(activity)
+        if start is not None and start >= since:
+            out.append(activity)
+    return out
+
+
+def body_battery_events(report: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """What charged or drained Body Battery today (sleep, activities, stress...)."""
+    events = []
+    for event in dig(report, "bodyBatteryActivityEvent") or []:
+        if not isinstance(event, dict):
+            continue
+        start = parse_timestamp(event.get("eventStartTimeGmt"))
+        millis = event.get("durationInMilliseconds")
+        events.append(
+            {
+                "type": lower_label(event.get("eventType")),
+                "start": start.isoformat() if start else None,
+                "duration_minutes": round(millis / 60000)
+                if isinstance(millis, (int, float))
+                else None,
+                "impact": event.get("bodyBatteryImpact"),
+                "feedback": lower_label(event.get("shortFeedback")),
+            }
+        )
+    return events
+
+
+def sleep_need_hours(need: dict[str, Any] | None) -> float | None:
+    """Garmin's recommended sleep (minutes in the API) as hours."""
+    minutes = dig(need, "actual")
+    if not isinstance(minutes, (int, float)) or isinstance(minutes, bool) or minutes <= 0:
+        return None
+    return round(minutes / 60, 2)
+
+
+def sleep_need_attrs(need: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Why Garmin adjusted tonight's sleep need."""
+    if not isinstance(need, dict):
+        return None
+    baseline = need.get("baseline")
+    out = {
+        "baseline_hours": round(baseline / 60, 2) if isinstance(baseline, (int, float)) else None,
+        "feedback": lower_label(need.get("feedback")),
+        "training_adjustment": lower_label(need.get("trainingFeedback")),
+        "sleep_history_adjustment": lower_label(need.get("sleepHistoryAdjustment")),
+        "hrv_adjustment": lower_label(need.get("hrvAdjustment")),
+        "nap_adjustment": lower_label(need.get("napAdjustment")),
+    }
+    return {k: v for k, v in out.items() if v is not None} or None

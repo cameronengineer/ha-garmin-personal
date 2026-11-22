@@ -1,0 +1,245 @@
+"""Tests for the newer data: live HR and zones, fitness, sleep need, weekly
+totals, the activities calendar, the new-activity event and FIT download."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+import io
+from pathlib import Path
+import zipfile
+
+from freezegun.api import FrozenDateTimeFactory
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_registry as er
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+
+from custom_components.garmin_personal.const import DOMAIN
+from custom_components.garmin_personal.parsing import heart_rate_zone, latest_vo2_max
+
+from .conftest import ACTIVITIES, BASE, DAILY_SLEEP, VO2_MAX, mock_garmin
+
+PREFIX = "sensor.garmin_test_runner"
+# Sunday 22 Nov 2026, 09:00 UTC (01:00 Pacific, HA's test time zone).
+pytestmark = pytest.mark.freeze_time("2026-11-22 09:00:00+00:00")
+
+
+def _activity(aid: int, name: str, start: datetime, **extra: object) -> dict:
+    return {
+        "activityId": aid,
+        "activityName": name,
+        "activityType": {"typeKey": extra.pop("type_key", "running")},
+        "beginTimestamp": int(start.timestamp() * 1000),
+        "elapsedDuration": 1800.0,
+        "duration": 1700.0,
+        "distance": 5000.0,
+        "calories": 400.0,
+        **extra,
+    }
+
+
+async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    registry = er.async_get(hass)
+    changed = False
+    for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if ent.disabled_by:
+            registry.async_update_entity(ent.entity_id, disabled_by=None)
+            changed = True
+    if changed:
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+def _state(hass: HomeAssistant, name: str) -> str:
+    st = hass.states.get(f"{PREFIX}_{name}")
+    assert st is not None, name
+    return st.state
+
+
+async def test_new_sensor_values(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Live HR, zones, fitness, sleep need, Pulse Ox, nutrition, goal, cycle."""
+    sleep = {
+        **DAILY_SLEEP,
+        "nextSleepNeed": {"baseline": 480, "actual": 510, "trainingFeedback": "INCREASED"},
+    }
+    mock_garmin(aioclient_mock, sleep=sleep)
+    await _setup(hass, config_entry)
+
+    assert _state(hass, "heart_rate") == "128"  # newest non-null reading
+    assert hass.states.get(f"{PREFIX}_heart_rate").attributes["measured_at"].startswith("2026")
+    assert _state(hass, "heart_rate_zone") == "2"  # 128 bpm: zone 2 floor 117, zone 3 137
+    assert _state(hass, "resting_heart_rate_7_day_average") == "53"
+    assert _state(hass, "max_heart_rate_setting") == "195"
+    assert hass.states.get(f"{PREFIX}_max_heart_rate_setting").attributes["zone_3_floor"] == 137
+    assert _state(hass, "vo2_max") == "48.0"
+    assert _state(hass, "vo2_max_cycling") == "44.6"
+    assert _state(hass, "fitness_age") == "28.4"
+    assert hass.states.get(f"{PREFIX}_fitness_age").attributes["chronological_age"] == 31
+    assert _state(hass, "sleep_need_tonight") == "8.5"
+    need = hass.states.get(f"{PREFIX}_sleep_need_tonight").attributes
+    assert need["training_adjustment"] == "increased"
+    assert _state(hass, "hrv_5_minute_high") == "unknown"  # not in this fixture
+    assert _state(hass, "pulse_ox_7_day_average") == "97.3"
+    assert _state(hass, "lowest_pulse_ox") == "86"
+    assert _state(hass, "calories_eaten") == "1840"
+    assert hass.states.get(f"{PREFIX}_calories_eaten").attributes["foods_logged"] == 1
+    assert _state(hass, "protein_eaten") == "96.0"
+    assert _state(hass, "weight_goal") == "78.0"  # grams in, kg out
+    assert _state(hass, "cycle_day") == "12"
+
+    events = hass.states.get(f"{PREFIX}_body_battery").attributes["events"]
+    assert [e["type"] for e in events] == ["sleep", "activity"]
+    assert events[1]["impact"] == -11
+
+
+async def test_weekly_totals(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Only activities since Monday (local) count towards this week."""
+    # Local (US/Pacific) now: Sun 22 Nov 01:00, so the week started Mon 16 Nov.
+    activities = [
+        _activity(3, "Sunday run", datetime(2026, 11, 22, 8, 0, tzinfo=UTC)),
+        _activity(2, "Monday ride", datetime(2026, 11, 16, 18, 0, tzinfo=UTC), distance=20000.0),
+        _activity(1, "Last week", datetime(2026, 11, 15, 18, 0, tzinfo=UTC)),
+    ]
+    mock_garmin(aioclient_mock, activities=activities)
+    await _setup(hass, config_entry)
+
+    assert _state(hass, "workouts_this_week") == "2"
+    assert _state(hass, "activity_time_this_week") == "60.0"
+    assert float(_state(hass, "distance_this_week")) == pytest.approx(25.0)
+    assert _state(hass, "activity_calories_this_week") == "800.0"
+    names = [
+        a["name"] for a in hass.states.get(f"{PREFIX}_workouts_this_week").attributes["activities"]
+    ]
+    assert names == ["Sunday run", "Monday ride"]
+    assert _state(hass, "last_activity_duration") == "30.0"
+
+
+async def test_activities_calendar(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+) -> None:
+    """The calendar lists activities in a date range with details."""
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry)
+    entity_id = "calendar.garmin_test_runner_activities"
+    assert hass.states.get(entity_id) is not None
+
+    client = await hass_client()
+    resp = await client.get(
+        f"/api/calendars/{entity_id}?start=2026-11-20T00:00:00Z&end=2026-11-23T00:00:00Z"
+    )
+    assert resp.status == 200
+    events = await resp.json()
+    assert len(events) == 1
+    event = events[0]
+    assert event["summary"] == "Morning Run"
+    assert "Distance: 5.01 km" in event["description"]
+    assert "Average HR: 148 bpm" in event["description"]
+    assert event["uid"] == "12345"
+
+    # The date range is passed to Garmin.
+    search = [c for c in aioclient_mock.mock_calls if "search/activities" in str(c[1])][-1]
+    assert search[1].query["startDate"] == "2026-11-18"
+
+
+async def test_new_activity_event(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Existing activities don't fire; one that syncs later does, once."""
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry)
+    entity_id = "event.garmin_test_runner_new_activity"
+    assert hass.states.get(entity_id).state == "unknown"
+
+    newer = _activity(
+        99, "Evening boxing", datetime(2026, 11, 22, 8, 30, tzinfo=UTC), type_key="boxing"
+    )
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, activities=[newer, *ACTIVITIES])
+    freezer.tick(timedelta(minutes=65))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state.state != "unknown"
+    assert state.attributes["event_type"] == "new_activity"
+    assert state.attributes["name"] == "Evening boxing"
+    assert state.attributes["activity_type"] == "boxing"
+    fired_at = state.state
+
+    # Same data again: no new event.
+    freezer.tick(timedelta(minutes=65))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == fired_at
+
+
+def _zip(name: str, payload: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(name, payload)
+    return buf.getvalue()
+
+
+async def test_download_activity(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """The action saves the FIT file out of Garmin's ZIP and returns its path."""
+    mock_garmin(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE}/download-service/files/activity/12345",
+        content=_zip("12345_ACTIVITY.fit", b".FIT-data"),
+        headers={"Content-Type": "application/x-zip-compressed"},
+    )
+    await _setup(hass, config_entry)
+
+    result = await hass.services.async_call(
+        DOMAIN, "download_activity", {}, blocking=True, return_response=True
+    )
+    assert result["activity_id"] == 12345
+    (path,) = result["files"]
+    assert path.endswith("12345_Morning_Run.fit")
+    assert Path(path).read_bytes() == b".FIT-data"
+    _m, _url, _d, headers = aioclient_mock.mock_calls[-1]
+    assert "application/zip" in headers["Accept"]  # Garmin 406s without it
+
+
+async def test_download_needs_an_account(hass: HomeAssistant) -> None:
+    """Calling the action with nothing set up is a clear validation error."""
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, DOMAIN, {})
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, "download_activity", {}, blocking=True)
+
+
+def test_heart_rate_zone_edges() -> None:
+    """Zone boundaries: below zone 1 is 0, a floor value is in that zone."""
+    zones = {f"zone{i}Floor": f for i, f in enumerate([98, 117, 137, 156, 176], start=1)}
+    assert heart_rate_zone(60, zones) == 0
+    assert heart_rate_zone(98, zones) == 1
+    assert heart_rate_zone(176, zones) == 5
+    assert heart_rate_zone(None, zones) is None
+    assert heart_rate_zone(120, {"zone1Floor": 98}) is None
+
+
+def test_latest_vo2_max() -> None:
+    """Newest entry per sport wins; missing sports are None."""
+    assert latest_vo2_max(VO2_MAX, "generic") == 48.0
+    assert latest_vo2_max(VO2_MAX, "rowing") is None
+    assert latest_vo2_max([], "generic") is None

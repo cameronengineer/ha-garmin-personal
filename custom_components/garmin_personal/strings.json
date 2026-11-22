@@ -198,7 +198,120 @@
       },
       "token_expires": {
         "name": "Access token expires"
+      },
+      "last_activity_duration": {
+        "name": "Last activity duration"
+      },
+      "workouts_this_week": {
+        "name": "Workouts this week"
+      },
+      "activity_time_this_week": {
+        "name": "Activity time this week"
+      },
+      "distance_this_week": {
+        "name": "Distance this week"
+      },
+      "activity_calories_this_week": {
+        "name": "Activity calories this week"
+      },
+      "heart_rate": {
+        "name": "Heart rate"
+      },
+      "heart_rate_zone": {
+        "name": "Heart rate zone"
+      },
+      "resting_heart_rate_7_day": {
+        "name": "Resting heart rate 7-day average"
+      },
+      "max_heart_rate_setting": {
+        "name": "Max heart rate setting"
+      },
+      "vo2_max": {
+        "name": "VO2 max"
+      },
+      "vo2_max_cycling": {
+        "name": "VO2 max cycling"
+      },
+      "fitness_age": {
+        "name": "Fitness age"
+      },
+      "sleep_need": {
+        "name": "Sleep need tonight"
+      },
+      "hrv_5_min_high": {
+        "name": "HRV 5-minute high"
+      },
+      "pulse_ox_7_day": {
+        "name": "Pulse Ox 7-day average"
+      },
+      "pulse_ox_lowest": {
+        "name": "Lowest Pulse Ox"
+      },
+      "sleep_pulse_ox": {
+        "name": "Sleeping Pulse Ox"
+      },
+      "calories_consumed": {
+        "name": "Calories eaten"
+      },
+      "carbs_consumed": {
+        "name": "Carbs eaten"
+      },
+      "protein_consumed": {
+        "name": "Protein eaten"
+      },
+      "fat_consumed": {
+        "name": "Fat eaten"
+      },
+      "weight_goal": {
+        "name": "Weight goal"
+      },
+      "cycle_day": {
+        "name": "Cycle day"
       }
+    },
+    "calendar": {
+      "activities": {
+        "name": "Activities"
+      }
+    },
+    "event": {
+      "new_activity": {
+        "name": "New activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "new_activity": "New activity"
+            }
+          }
+        }
+      }
+    }
+  },
+  "services": {
+    "download_activity": {
+      "name": "Download activity file",
+      "description": "Saves an activity's original FIT file from Garmin into the garmin_activities folder in your Home Assistant config directory. Returns the saved file paths.",
+      "fields": {
+        "activity_id": {
+          "name": "Activity ID",
+          "description": "Which activity to download. Leave empty for the most recent one. The ID is on the Last activity sensor and in each calendar event."
+        },
+        "config_entry_id": {
+          "name": "Garmin account",
+          "description": "Only needed if you've added more than one Garmin account."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_loaded_account": {
+      "message": "No Garmin account is set up and running."
+    },
+    "choose_account": {
+      "message": "More than one Garmin account is set up; choose which one to use."
+    },
+    "no_activities": {
+      "message": "There are no Garmin activities to download yet."
     }
   }
 }

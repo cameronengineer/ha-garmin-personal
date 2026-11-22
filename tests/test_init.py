@@ -52,7 +52,7 @@ async def test_setup_and_sensor_values(
 
     registry = er.async_get(hass)
     entities = er.async_entries_for_config_entry(registry, config_entry.entry_id)
-    assert len(entities) == len(SENSORS)
+    assert len(entities) == len(SENSORS) + 2  # + activities calendar + new-activity event
 
     await _enable_all(hass, config_entry)
 
@@ -233,5 +233,5 @@ async def test_diagnostics_redacts_secrets(
     assert API_KEY not in text
     assert "test-runner" not in text
     assert diag["entry"]["data"]["api_key"] == "**REDACTED**"
-    assert diag["data"]["activity"]["startLatitude"] == "**REDACTED**"
+    assert diag["data"]["activities"][0]["startLatitude"] == "**REDACTED**"
     assert diag["data"]["summary"]["movement"]["steps"]["value"] == 6543

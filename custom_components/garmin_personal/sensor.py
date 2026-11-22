@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -22,23 +23,36 @@ from homeassistant.const import (
     UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
 from .coordinator import GarminConfigEntry, GarminCoordinator, GarminData
+from .entity import account_id, device_info
 from .parsing import (
+    activities_since,
+    activity_seconds,
+    activity_start,
+    activity_summary,
+    body_battery_events,
+    default_zones,
     dig,
+    heart_rate_zone,
+    latest_reading,
+    latest_vo2_max,
     lower_label,
     parse_timestamp,
     seconds_to_hours,
+    sleep_need_attrs,
+    sleep_need_hours,
     sleep_score,
     sleep_score_components,
+    weight_goal_kg,
     weight_kg,
 )
 
 BPM = "bpm"
+GRAMS = UnitOfMass.GRAMS
 BREATHS_PER_MIN = "br/min"
 HRV_UNIT = "ms"
 
@@ -90,29 +104,111 @@ def _non_negative(fn: Callable[[GarminData], Any]) -> Callable[[GarminData], Any
 
 
 def _activity_attrs(data: GarminData) -> dict[str, Any] | None:
-    act = data.activity
-    if not act:
-        return None
-    start = parse_timestamp(act.get("beginTimestamp")) or parse_timestamp(act.get("startTimeGMT"))
     # Deliberately no GPS coordinates: they'd put home/work locations in HA history.
-    attrs = {
-        "activity_id": act.get("activityId"),
-        "activity_type": dig(act, "activityType", "typeKey"),
-        "start_time": start.isoformat() if start else None,
-        "duration_minutes": round(act["duration"] / 60, 1)
-        if isinstance(act.get("duration"), (int, float))
-        else None,
-        "distance_km": round(act["distance"] / 1000, 2)
-        if isinstance(act.get("distance"), (int, float))
-        else None,
-        "calories": act.get("calories"),
-        "average_hr": act.get("averageHR"),
-        "max_hr": act.get("maxHR"),
-        "aerobic_training_effect": act.get("aerobicTrainingEffect"),
-        "anaerobic_training_effect": act.get("anaerobicTrainingEffect"),
-        "training_load": act.get("activityTrainingLoad"),
+    attrs = activity_summary(data.activity)
+    attrs.pop("name", None)
+    return attrs or None
+
+
+def _week_start() -> Any:
+    """Start of this week (Monday, local time)."""
+    today = dt_util.start_of_local_day()
+    return today - timedelta(days=today.weekday())
+
+
+def _this_week(data: GarminData) -> list[dict[str, Any]]:
+    return activities_since(data.activities, dt_util.as_utc(_week_start()))
+
+
+def _week_sum(key: str, scale: float = 1.0) -> Callable[[GarminData], Any]:
+    def fn(data: GarminData) -> Any:
+        total = 0.0
+        for act in _this_week(data):
+            value = act.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                total += value
+        return round(total * scale, 2)
+
+    return fn
+
+
+def _week_minutes(data: GarminData) -> float:
+    return round(sum(activity_seconds(a) or 0 for a in _this_week(data)) / 60, 1)
+
+
+def _week_attrs(data: GarminData) -> dict[str, Any] | None:
+    acts = _this_week(data)
+    if not acts:
+        return {"week_start": _week_start().date().isoformat(), "activities": []}
+    return {
+        "week_start": _week_start().date().isoformat(),
+        "activities": [
+            {
+                "name": a.get("activityName"),
+                "type": dig(a, "activityType", "typeKey"),
+                "start": (activity_start(a) or _week_start()).isoformat(),
+            }
+            for a in acts
+        ],
     }
-    return {k: v for k, v in attrs.items() if v is not None}
+
+
+def _latest_hr(data: GarminData) -> float | None:
+    reading = latest_reading(dig(data.heart_rate, "heartRateValues"))
+    return reading[1] if reading else None
+
+
+def _latest_hr_attrs(data: GarminData) -> dict[str, Any] | None:
+    reading = latest_reading(dig(data.heart_rate, "heartRateValues"))
+    return {"measured_at": reading[0].isoformat()} if reading else None
+
+
+def _zones_attrs(data: GarminData) -> dict[str, Any] | None:
+    zones = default_zones(data.hr_zones)
+    if not zones:
+        return None
+    out: dict[str, Any] = {f"zone_{i}_floor": zones.get(f"zone{i}Floor") for i in range(1, 6)}
+    out["lactate_threshold_hr"] = zones.get("lactateThresholdHeartRateUsed")
+    out["resting_hr_used"] = zones.get("restingHeartRateUsed")
+    out["method"] = lower_label(zones.get("trainingMethod"))
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _fitness_age_attrs(data: GarminData) -> dict[str, Any] | None:
+    fa = data.fitness_age
+    if not isinstance(fa, dict):
+        return None
+    out = {
+        "chronological_age": fa.get("chronologicalAge"),
+        "achievable_fitness_age": round(fa["achievableFitnessAge"], 1)
+        if isinstance(fa.get("achievableFitnessAge"), (int, float))
+        else None,
+        "previous_fitness_age": round(fa["previousFitnessAge"], 1)
+        if isinstance(fa.get("previousFitnessAge"), (int, float))
+        else None,
+    }
+    return {k: v for k, v in out.items() if v is not None} or None
+
+
+def _round1(value: Any) -> Any:
+    return (
+        round(value, 1) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    )
+
+
+def _cycle_attrs(data: GarminData) -> dict[str, Any] | None:
+    summary = dig(data.menstrual, "daySummary")
+    if not isinstance(summary, dict):
+        return None
+    out = {
+        "phase": summary.get("currentPhase"),
+        "days_until_next_phase": summary.get("daysUntilNextPhase"),
+        "predicted_cycle_length": summary.get("predictedCycleLength"),
+        "period_length": summary.get("periodLength"),
+        "predicted_ovulation_date": dig(summary, "predictedOvulationDate", "localDate"),
+        "cycle_start": dig(summary, "startDate", "localDate"),
+    }
+    return {k: v for k, v in out.items() if v is not None} or None
 
 
 def _steps_attrs(data: GarminData) -> dict[str, Any] | None:
@@ -121,8 +217,14 @@ def _steps_attrs(data: GarminData) -> dict[str, Any] | None:
 
 
 def _body_battery_attrs(data: GarminData) -> dict[str, Any] | None:
+    out: dict[str, Any] = {}
     feedback = dig(data.summary, "bodyBattery", "dynamicFeedbackEvent", "feedbackShortType")
-    return {"feedback": feedback} if feedback else None
+    if feedback:
+        out["feedback"] = feedback
+    events = body_battery_events(data.body_battery)
+    if events:
+        out["events"] = events
+    return out or None
 
 
 def _hrv_attrs(data: GarminData) -> dict[str, Any] | None:
@@ -133,6 +235,7 @@ def _hrv_attrs(data: GarminData) -> dict[str, Any] | None:
         "baseline_low_upper": baseline.get("lowUpper"),
         "baseline_balanced_low": baseline.get("balancedLow"),
         "baseline_balanced_upper": baseline.get("balancedUpper"),
+        "feedback": lower_label(dig(data.hrv, "hrvSummary", "feedbackPhrase")),
     }
 
 
@@ -495,6 +598,228 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
             or parse_timestamp(dig(data.activity, "startTimeGMT"))
         ),
     ),
+    GarminSensorEntityDescription(
+        key="last_activity_duration",
+        translation_key="last_activity_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        suggested_display_precision=0,
+        value_fn=lambda data: _round1((activity_seconds(data.activity) or 0) / 60 or None),
+    ),
+    # -------------------------------------------------------------- this week
+    GarminSensorEntityDescription(
+        key="workouts_this_week",
+        translation_key="workouts_this_week",
+        native_unit_of_measurement="workouts",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: len(_this_week(data)),
+        attrs_fn=_week_attrs,
+    ),
+    GarminSensorEntityDescription(
+        key="activity_time_this_week",
+        translation_key="activity_time_this_week",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        suggested_display_precision=0,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_week_minutes,
+    ),
+    GarminSensorEntityDescription(
+        key="distance_this_week",
+        translation_key="distance_this_week",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        suggested_unit_of_measurement=UnitOfLength.KILOMETERS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_week_sum("distance"),
+    ),
+    GarminSensorEntityDescription(
+        key="activity_calories_this_week",
+        translation_key="activity_calories_this_week",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_week_sum("calories"),
+    ),
+    # ------------------------------------------------- live heart rate / zones
+    GarminSensorEntityDescription(
+        key="heart_rate",
+        translation_key="heart_rate",
+        native_unit_of_measurement=BPM,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_latest_hr,
+        attrs_fn=_latest_hr_attrs,
+    ),
+    GarminSensorEntityDescription(
+        key="heart_rate_zone",
+        translation_key="heart_rate_zone",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: heart_rate_zone(_latest_hr(data), default_zones(data.hr_zones)),
+    ),
+    GarminSensorEntityDescription(
+        key="resting_heart_rate_7_day",
+        translation_key="resting_heart_rate_7_day",
+        native_unit_of_measurement=BPM,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(
+            lambda data: dig(data.heart_rate, "lastSevenDaysAvgRestingHeartRate")
+        ),
+    ),
+    GarminSensorEntityDescription(
+        key="max_heart_rate_setting",
+        translation_key="max_heart_rate_setting",
+        native_unit_of_measurement=BPM,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: dig(default_zones(data.hr_zones), "maxHeartRateUsed"),
+        attrs_fn=_zones_attrs,
+    ),
+    # --------------------------------------------------------------- fitness
+    GarminSensorEntityDescription(
+        key="vo2_max",
+        translation_key="vo2_max",
+        native_unit_of_measurement="mL/kg/min",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: latest_vo2_max(data.vo2_max, "generic"),
+    ),
+    GarminSensorEntityDescription(
+        key="vo2_max_cycling",
+        translation_key="vo2_max_cycling",
+        native_unit_of_measurement="mL/kg/min",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: latest_vo2_max(data.vo2_max, "cycling"),
+    ),
+    GarminSensorEntityDescription(
+        key="fitness_age",
+        translation_key="fitness_age",
+        native_unit_of_measurement=UnitOfTime.YEARS,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: _round1(dig(data.fitness_age, "fitnessAge")),
+        attrs_fn=_fitness_age_attrs,
+    ),
+    # ------------------------------------------------------------ sleep need
+    GarminSensorEntityDescription(
+        key="sleep_need",
+        translation_key="sleep_need",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        suggested_display_precision=1,
+        value_fn=lambda data: sleep_need_hours(
+            dig(data.sleep, "nextSleepNeed") or dig(data.sleep, "sleepNeed")
+        ),
+        attrs_fn=lambda data: sleep_need_attrs(
+            dig(data.sleep, "nextSleepNeed") or dig(data.sleep, "sleepNeed")
+        ),
+    ),
+    GarminSensorEntityDescription(
+        key="hrv_5_min_high",
+        translation_key="hrv_5_min_high",
+        native_unit_of_measurement=HRV_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(_hrv("lastNight5MinHigh")),
+    ),
+    # ------------------------------------------------------------- Pulse Ox
+    GarminSensorEntityDescription(
+        key="pulse_ox_7_day",
+        translation_key="pulse_ox_7_day",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: _round1(dig(data.spo2, "lastSevenDaysAvgSpO2"))),
+    ),
+    GarminSensorEntityDescription(
+        key="pulse_ox_lowest",
+        translation_key="pulse_ox_lowest",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: dig(data.spo2, "lowestSpO2")),
+    ),
+    GarminSensorEntityDescription(
+        key="sleep_pulse_ox",
+        translation_key="sleep_pulse_ox",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=1,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: _round1(dig(data.spo2, "avgSleepSpO2"))),
+    ),
+    # ------------------------------------------------------------ nutrition
+    GarminSensorEntityDescription(
+        key="calories_consumed",
+        translation_key="calories_consumed",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(
+            lambda data: (
+                dig(data.food, "dailyNutritionContent", "calories")
+                or dig(data.summary, "calories", "consumedValue")
+            )
+        ),
+        attrs_fn=lambda data: (
+            {
+                k: v
+                for k, v in {
+                    "goal": dig(data.food, "dailyNutritionGoals", "calories")
+                    or dig(data.summary, "calories", "consumedGoal"),
+                    "foods_logged": len(dig(data.food, "loggedFoodsWithServingSizes") or []),
+                }.items()
+                if v is not None
+            }
+            or None
+        ),
+    ),
+    GarminSensorEntityDescription(
+        key="carbs_consumed",
+        translation_key="carbs_consumed",
+        native_unit_of_measurement=GRAMS,
+        device_class=SensorDeviceClass.WEIGHT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "carbs")),
+    ),
+    GarminSensorEntityDescription(
+        key="protein_consumed",
+        translation_key="protein_consumed",
+        native_unit_of_measurement=GRAMS,
+        device_class=SensorDeviceClass.WEIGHT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "protein")),
+    ),
+    GarminSensorEntityDescription(
+        key="fat_consumed",
+        translation_key="fat_consumed",
+        native_unit_of_measurement=GRAMS,
+        device_class=SensorDeviceClass.WEIGHT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "fat")),
+    ),
+    # ----------------------------------------------------- goals and cycle
+    GarminSensorEntityDescription(
+        key="weight_goal",
+        translation_key="weight_goal",
+        device_class=SensorDeviceClass.WEIGHT,
+        native_unit_of_measurement=UnitOfMass.KILOGRAMS,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        value_fn=lambda data: weight_goal_kg(data.weight_goal),
+    ),
+    GarminSensorEntityDescription(
+        key="cycle_day",
+        translation_key="cycle_day",
+        entity_registry_enabled_default=False,
+        value_fn=_non_negative(lambda data: dig(data.menstrual, "daySummary", "dayInCycle")),
+        attrs_fn=_cycle_attrs,
+    ),
     # ------------------------------------------------------------ diagnostics
     GarminSensorEntityDescription(
         key="token_expires",
@@ -532,15 +857,8 @@ class GarminSensor(CoordinatorEntity[GarminCoordinator], SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         entry = coordinator.config_entry
-        self._attr_unique_id = f"{entry.unique_id or entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.unique_id or entry.entry_id)},
-            name=entry.title,
-            manufacturer="Garmin",
-            model="Garmin Connect account",
-            entry_type=DeviceEntryType.SERVICE,
-            configuration_url="https://connect.garmin.com/",
-        )
+        self._attr_unique_id = f"{account_id(entry)}_{description.key}"
+        self._attr_device_info = device_info(entry)
 
     @property
     def native_value(self) -> Any:
