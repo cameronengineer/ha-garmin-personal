@@ -1,0 +1,204 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect your Garmin account",
+        "description": "Create a Personal API key at [Garmin Connect → Settings → Personal API Key]({key_url}) (pick the longest expiry you're comfortable with), then paste it here. The key is only shown once on Garmin's site.",
+        "data": {
+          "api_key": "Personal API key",
+          "region": "Garmin Connect server"
+        },
+        "data_description": {
+          "api_key": "Starts working immediately. Garmin emails you about a week before it expires.",
+          "region": "Use China only if your account is on connect.garmin.cn."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Garmin API key needs replacing",
+        "description": "The Personal API key for {title} has expired or was revoked. Create a new one at [Garmin Connect → Settings → Personal API Key]({key_url}) and paste it here.",
+        "data": {
+          "api_key": "Personal API key"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Garmin rejected that key. Check it was copied in full and hasn't expired or been deleted.",
+      "cannot_connect": "Couldn't reach Garmin. Check Home Assistant's internet connection and try again.",
+      "unknown": "Garmin sent an unexpected response. Check the Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This Garmin account is already set up.",
+      "reauth_successful": "New key saved. Garmin data will resume shortly.",
+      "wrong_account": "That key belongs to a different Garmin account."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Garmin polling",
+        "data": {
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "scan_interval": "How often to fetch today's summary (steps, heart rate, Body Battery, stress). Sleep, HRV, weight and activities are fetched at most hourly."
+        }
+      }
+    }
+  },
+  "selector": {
+    "region": {
+      "options": {
+        "global": "Global (connect.garmin.com)",
+        "china": "China (connect.garmin.cn)"
+      }
+    }
+  },
+  "issues": {
+    "key_expiring": {
+      "title": "Garmin API key expires soon",
+      "description": "The Personal API key for {title} expires at {expires}. Create a new key in Garmin Connect now. When the old key stops working, Home Assistant will show a re-authentication prompt for this integration where you paste the new one."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "steps": {
+        "name": "Steps"
+      },
+      "distance": {
+        "name": "Distance"
+      },
+      "floors_ascended": {
+        "name": "Floors climbed"
+      },
+      "calories_total": {
+        "name": "Calories burned"
+      },
+      "calories_active": {
+        "name": "Active calories"
+      },
+      "calories_resting": {
+        "name": "Resting calories"
+      },
+      "intensity_minutes_moderate": {
+        "name": "Moderate intensity minutes"
+      },
+      "intensity_minutes_vigorous": {
+        "name": "Vigorous intensity minutes"
+      },
+      "hydration": {
+        "name": "Water intake"
+      },
+      "resting_heart_rate": {
+        "name": "Resting heart rate"
+      },
+      "min_heart_rate": {
+        "name": "Minimum heart rate"
+      },
+      "max_heart_rate": {
+        "name": "Maximum heart rate"
+      },
+      "stress_average": {
+        "name": "Average stress"
+      },
+      "stress_max": {
+        "name": "Maximum stress"
+      },
+      "stress_qualifier": {
+        "name": "Stress level"
+      },
+      "body_battery": {
+        "name": "Body Battery"
+      },
+      "body_battery_max": {
+        "name": "Body Battery high"
+      },
+      "body_battery_min": {
+        "name": "Body Battery low"
+      },
+      "body_battery_charged": {
+        "name": "Body Battery charged"
+      },
+      "body_battery_drained": {
+        "name": "Body Battery drained"
+      },
+      "respiration_latest": {
+        "name": "Respiration rate"
+      },
+      "respiration_average": {
+        "name": "Average respiration rate"
+      },
+      "pulse_ox_latest": {
+        "name": "Pulse Ox"
+      },
+      "pulse_ox_average": {
+        "name": "Average Pulse Ox"
+      },
+      "sleep_duration": {
+        "name": "Sleep duration"
+      },
+      "sleep_score": {
+        "name": "Sleep score"
+      },
+      "sleep_start": {
+        "name": "Fell asleep"
+      },
+      "sleep_end": {
+        "name": "Woke up"
+      },
+      "deep_sleep": {
+        "name": "Deep sleep"
+      },
+      "light_sleep": {
+        "name": "Light sleep"
+      },
+      "rem_sleep": {
+        "name": "REM sleep"
+      },
+      "awake_time": {
+        "name": "Awake time"
+      },
+      "awake_count": {
+        "name": "Times woken"
+      },
+      "sleep_heart_rate": {
+        "name": "Sleeping heart rate"
+      },
+      "sleep_stress": {
+        "name": "Sleep stress"
+      },
+      "sleep_respiration": {
+        "name": "Sleeping respiration rate"
+      },
+      "hrv_last_night": {
+        "name": "HRV last night"
+      },
+      "hrv_weekly_average": {
+        "name": "HRV 7-day average"
+      },
+      "hrv_status": {
+        "name": "HRV status"
+      },
+      "weight": {
+        "name": "Weight"
+      },
+      "bmi": {
+        "name": "BMI"
+      },
+      "body_fat": {
+        "name": "Body fat"
+      },
+      "last_weigh_in": {
+        "name": "Last weigh-in"
+      },
+      "last_activity": {
+        "name": "Last activity"
+      },
+      "last_activity_start": {
+        "name": "Last activity start"
+      },
+      "token_expires": {
+        "name": "Access token expires"
+      }
+    }
+  }
+}

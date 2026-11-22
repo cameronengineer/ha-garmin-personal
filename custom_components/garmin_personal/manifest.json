@@ -1,0 +1,13 @@
+{
+  "domain": "garmin_personal",
+  "name": "Garmin Connect Personal API",
+  "codeowners": ["@cameronengineer"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/cameronengineer/ha-garmin-personal",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/cameronengineer/ha-garmin-personal/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
