@@ -41,10 +41,12 @@ def _activity(aid: int, name: str, start: datetime, **extra: object) -> dict:
     }
 
 
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def _setup(hass: HomeAssistant, entry: MockConfigEntry, *, enable_all: bool = True) -> None:
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    if not enable_all:
+        return
     registry = er.async_get(hass)
     changed = False
     for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
@@ -162,7 +164,9 @@ async def test_new_activity_event(
 ) -> None:
     """Existing activities don't fire; one that syncs later does, once."""
     mock_garmin(aioclient_mock)
-    await _setup(hass, config_entry)
+    # Don't enable extra entities here: HA reloads the entry 30 s after that,
+    # and the time jumps below would race with the reload.
+    await _setup(hass, config_entry, enable_all=False)
     entity_id = "event.garmin_test_runner_new_activity"
     assert hass.states.get(entity_id).state == "unknown"
 
