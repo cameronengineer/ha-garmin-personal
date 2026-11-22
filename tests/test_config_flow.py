@@ -85,6 +85,23 @@ async def test_profile_forbidden_still_sets_up(
     assert result["title"] == "Garmin Connect"
 
 
+async def test_uuid_display_name_gets_friendly_title(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A UUID display name isn't used as the device name."""
+    aioclient_mock.get(
+        f"{BASE}/userprofile-service/userprofile/settings",
+        json={"displayName": "b3f19d41-3f3f-449a-89f0-000000000000"},
+    )
+    mock_garmin(aioclient_mock)
+    flow_id = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {"api_key": API_KEY, CONF_REGION: REGION_GLOBAL}
+    )
+    await hass.async_block_till_done()
+    assert result["title"] == "Garmin Connect"
+
+
 @pytest.mark.parametrize(
     ("status", "error"),
     [(401, "invalid_auth"), (503, "cannot_connect")],

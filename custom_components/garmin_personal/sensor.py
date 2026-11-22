@@ -639,7 +639,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="activity_calories_this_week",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        state_class=SensorStateClass.MEASUREMENT,
+        # Energy sensors can't be "measurement"; this one resets every Monday.
+        state_class=SensorStateClass.TOTAL_INCREASING,
         value_fn=_week_sum("calories"),
     ),
     # ------------------------------------------------- live heart rate / zones

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+import re
 from typing import Any
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlowWithReload
@@ -47,6 +48,8 @@ from .coordinator import GarminConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
 API_KEY_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 REGION_SELECTOR = SelectSelector(
     SelectSelectorConfig(
@@ -84,7 +87,10 @@ async def _validate(flow: ConfigFlow, api_key: str, region: str) -> tuple[str, s
             unique_id = str(summary["userProfilePk"])
     if unique_id is None:
         unique_id = str(display_name or "account")
-    title = f"Garmin {display_name}" if display_name else "Garmin Connect"
+    # Garmin gives accounts without a chosen display name a UUID; that makes a
+    # poor device name and entity IDs like sensor.garmin_b3f19d41_..._steps.
+    friendly = display_name and not _UUID_RE.fullmatch(str(display_name))
+    title = f"Garmin {display_name}" if friendly else "Garmin Connect"
     return f"{region}:{unique_id}", title
 
 
