@@ -126,6 +126,46 @@ async def test_weekly_totals(
     assert _state(hass, "last_activity_duration") == "30.0"
 
 
+async def test_week_follows_garmin_first_day(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """With a Sunday week start, Sunday's activity starts a new week."""
+    # Local (US/Pacific) now: Sun 22 Nov 01:00 -> week started Sun 22 Nov 00:00.
+    activities = [
+        _activity(3, "Sunday run", datetime(2026, 11, 22, 8, 30, tzinfo=UTC)),
+        _activity(2, "Saturday ride", datetime(2026, 11, 21, 18, 0, tzinfo=UTC)),
+    ]
+    # Registered first so it wins over mock_garmin's default profile.
+    aioclient_mock.get(
+        f"{BASE}/userprofile-service/userprofile/settings",
+        json={"displayName": "x", "firstDayOfWeek": {"dayId": 2, "dayName": "sunday"}},
+    )
+    mock_garmin(aioclient_mock, activities=activities)
+    await _setup(hass, config_entry, enable_all=False)
+    assert _state(hass, "workouts_this_week") == "1"
+    attrs = hass.states.get(f"{PREFIX}_workouts_this_week").attributes
+    assert attrs["week_start"] == "2026-11-22"
+
+
+async def test_diagnostics_omit_intimate_data(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Cycle and food logs never appear in diagnostics."""
+    from pytest_homeassistant_custom_component.components.diagnostics import (
+        get_diagnostics_for_config_entry,
+    )
+
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry, enable_all=False)
+    diag = await get_diagnostics_for_config_entry(hass, hass_client, config_entry)
+    assert diag["data"]["menstrual"] == "**OMITTED**"
+    assert diag["data"]["food"] == "**OMITTED**"
+    assert "Oats" not in str(diag)
+
+
 async def test_activities_calendar(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,
@@ -221,6 +261,27 @@ async def test_download_activity(
     assert Path(path).read_bytes() == b".FIT-data"
     _m, _url, _d, headers = aioclient_mock.mock_calls[-1]
     assert "application/zip" in headers["Accept"]  # Garmin 406s without it
+
+
+async def test_download_by_id_from_text_field(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """A long activity ID given as text (what the UI's text box sends) works."""
+    mock_garmin(aioclient_mock)
+    aioclient_mock.get(
+        f"{BASE}/download-service/files/activity/21234567890",
+        content=_zip("a.fit", b"x"),
+    )
+    await _setup(hass, config_entry, enable_all=False)
+    result = await hass.services.async_call(
+        DOMAIN,
+        "download_activity",
+        {"activity_id": "21234567890"},
+        blocking=True,
+        return_response=True,
+    )
+    assert result["activity_id"] == 21234567890
+    assert result["files"][0].endswith("21234567890_activity.fit")
 
 
 async def test_download_needs_an_account(hass: HomeAssistant) -> None:

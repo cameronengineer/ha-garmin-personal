@@ -83,7 +83,11 @@ async def _download_activity(call: ServiceCall) -> ServiceResponse:
         activity_id = int(activity["activityId"])
     else:
         activity = next(
-            (a for a in coordinator.data.activities if a.get("activityId") == activity_id),
+            (
+                a
+                for a in (coordinator.data.activities if coordinator.data else [])
+                if a.get("activityId") == activity_id
+            ),
             None,
         )
 

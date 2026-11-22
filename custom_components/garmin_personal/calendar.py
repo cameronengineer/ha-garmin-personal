@@ -111,6 +111,14 @@ class GarminActivitiesCalendar(CoordinatorEntity[GarminCoordinator], CalendarEnt
                 activities.extend(batch)
                 if len(batch) < CALENDAR_PAGE_SIZE:
                     break
+            else:
+                _LOGGER.warning(
+                    "Showing only the newest %s Garmin activities between %s and %s; "
+                    "narrow the calendar range to see older ones",
+                    len(activities),
+                    first,
+                    last,
+                )
         except GarminApiError as err:
             raise HomeAssistantError(f"Couldn't load Garmin activities: {err}") from err
 

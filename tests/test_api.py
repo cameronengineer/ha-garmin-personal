@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import time
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -59,12 +60,24 @@ async def test_short_token_reveals_key_expiry(
 async def test_token_refreshed_near_expiry(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
-    """A token inside the 1-hour refresh window is replaced."""
-    mock_garmin(aioclient_mock, token=make_jwt(lifetime_s=30 * 60))
+    """A normal 24 h token inside its last hour is replaced."""
+    issued = int(time.time()) - 23 * 3600 - 1800  # issued 23.5 h ago, 30 min left
+    mock_garmin(aioclient_mock, token=make_jwt(lifetime_s=1800, iat=issued))
     api = _api(hass)
     await api.async_get_token()
     await api.async_get_token()
     assert aioclient_mock.call_count == 2
+
+
+async def test_key_capped_token_is_reused(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A token cut short by the key's expiry isn't re-fetched on every call."""
+    mock_garmin(aioclient_mock, token=make_jwt(lifetime_s=1800))  # key ends in 30 min
+    api = _api(hass)
+    for _ in range(5):
+        await api.async_get_token()
+    assert aioclient_mock.call_count == 1
 
 
 @pytest.mark.parametrize("status", [400, 401, 403])

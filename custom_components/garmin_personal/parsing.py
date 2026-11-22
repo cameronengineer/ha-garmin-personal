@@ -321,3 +321,17 @@ def sleep_need_attrs(need: dict[str, Any] | None) -> dict[str, Any] | None:
         "nap_adjustment": lower_label(need.get("napAdjustment")),
     }
     return {k: v for k, v in out.items() if v is not None} or None
+
+
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def first_weekday(profile: dict[str, Any] | None) -> int:
+    """The user's first day of the week from Garmin (0 = Monday), default Monday.
+
+    Live API shape: ``{"dayId": 2, "dayName": "sunday", ...}``.
+    """
+    name = dig(profile, "firstDayOfWeek", "dayName")
+    if isinstance(name, str) and name.strip().lower() in _WEEKDAYS:
+        return _WEEKDAYS.index(name.strip().lower())
+    return 0

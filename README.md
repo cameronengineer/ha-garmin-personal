@@ -183,6 +183,8 @@ Notes:
   in the morning they show *unknown*.
 - Garmin uses `-1`/`-2` to mean "no reading"; those show as *unknown* rather than
   a misleading number.
+- **Weekly** totals start on the first day of the week set in your Garmin
+  profile (e.g. Sunday), matching Garmin Connect's own weekly view.
 - Extra detail is on attributes: the step goal, Body Battery feedback, sleep
   score components, HRV baseline ranges, and the latest activity's type,
   duration, distance, calories, heart rate and training effect.
@@ -311,7 +313,8 @@ automation:
   other integration's credentials. It's never logged.
 - Requests go only to Garmin (`personal.connectapi.garmin.com`, or `.cn`).
 - **Diagnostics** downloads redact the key, your Garmin user IDs, display
-  name, device IDs, GPS coordinates, location names and sleep notes.
+  name, device IDs, GPS coordinates, location names, sleep notes and activity
+  descriptions/comments, and leave out cycle-tracking and food logs entirely.
 - To revoke access at any time, delete the key in Garmin Connect.
 
 ## Verified against the live API

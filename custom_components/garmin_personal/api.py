@@ -23,7 +23,13 @@ from typing import Any
 
 import aiohttp
 
-from .const import KEY_EXPIRY_DETECTION, REQUEST_TIMEOUT_SECONDS, TOKEN_PATH, TOKEN_REFRESH_MARGIN
+from .const import (
+    KEY_EXPIRY_DETECTION,
+    REQUEST_TIMEOUT_SECONDS,
+    TOKEN_FINAL_MARGIN,
+    TOKEN_PATH,
+    TOKEN_REFRESH_MARGIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,12 +132,17 @@ class GarminPersonalApi:
     async def async_get_token(self, *, force: bool = False) -> AccessToken:
         """Return a valid access token, exchanging the API key if needed."""
         async with self._token_lock:
-            if (
-                not force
-                and self._token is not None
-                and not self._token.expires_within(TOKEN_REFRESH_MARGIN)
-            ):
-                return self._token
+            if not force and self._token is not None:
+                # Refresh an hour early normally. A token capped by the key's
+                # own expiry can't be renewed past it, so keep using it until
+                # it's actually about to lapse instead of re-fetching every call.
+                margin = (
+                    TOKEN_FINAL_MARGIN
+                    if self._token.key_expires_at is not None
+                    else TOKEN_REFRESH_MARGIN
+                )
+                if not self._token.expires_within(margin):
+                    return self._token
 
             url = f"{self._base_url}{TOKEN_PATH}"
             _LOGGER.debug("Requesting a new Garmin access token")

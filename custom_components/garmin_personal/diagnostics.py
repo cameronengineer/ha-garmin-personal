@@ -36,7 +36,22 @@ TO_REDACT = {
     "kidSleepNote",
     "unique_id",
     "title",
+    # Free text and intimate health logs.
+    "description",
+    "comments",
+    "notes",
+    "moods",
+    "symptoms",
+    "discharge",
+    "sexDrive",
+    "sexualActivity",
+    "foodName",
+    "brandName",
 }
+
+# Whole data groups left out of diagnostics: too personal to share, and not
+# needed to debug parsing (their presence is still reported).
+_OMIT = ("menstrual", "food")
 
 
 async def async_get_config_entry_diagnostics(
@@ -45,6 +60,9 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = entry.runtime_data
     data = asdict(coordinator.data) if coordinator.data else None
+    if data:
+        for key in _OMIT:
+            data[key] = "**OMITTED**" if data.get(key) else None
     return {
         "entry": async_redact_data(
             {"data": dict(entry.data), "options": dict(entry.options), "title": entry.title},

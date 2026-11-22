@@ -24,6 +24,8 @@ TOKEN_PATH: Final = "/personalapitoken-service/personal-api/personal-api-key/tok
 # Access tokens live for 24 h (or until the key expires). Refresh an hour early,
 # the same window Garmin's own Python client uses.
 TOKEN_REFRESH_MARGIN: Final = timedelta(hours=1)
+# For a token that ends when the key does, only renew right before it lapses.
+TOKEN_FINAL_MARGIN: Final = timedelta(minutes=2)
 
 # A token issued with a lifetime well short of 24 h means the API key itself
 # expires when the token does (Garmin: "valid for 24 hours or until the

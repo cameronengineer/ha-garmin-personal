@@ -1,11 +1,9 @@
 download_activity:
   fields:
     activity_id:
-      example: 21234567890
+      example: "21234567890"
       selector:
-        number:
-          min: 1
-          mode: box
+        text:
     config_entry_id:
       selector:
         config_entry:

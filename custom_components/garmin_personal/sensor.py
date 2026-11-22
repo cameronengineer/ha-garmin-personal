@@ -37,6 +37,7 @@ from .parsing import (
     body_battery_events,
     default_zones,
     dig,
+    first_weekday,
     heart_rate_zone,
     latest_reading,
     latest_vo2_max,
@@ -110,14 +111,15 @@ def _activity_attrs(data: GarminData) -> dict[str, Any] | None:
     return attrs or None
 
 
-def _week_start() -> Any:
-    """Start of this week (Monday, local time)."""
+def _week_start(data: GarminData) -> Any:
+    """Start of this week in local time, using Garmin's first day of the week."""
     today = dt_util.start_of_local_day()
-    return today - timedelta(days=today.weekday())
+    days_back = (today.weekday() - first_weekday(data.profile)) % 7
+    return today - timedelta(days=days_back)
 
 
 def _this_week(data: GarminData) -> list[dict[str, Any]]:
-    return activities_since(data.activities, dt_util.as_utc(_week_start()))
+    return activities_since(data.activities, dt_util.as_utc(_week_start(data)))
 
 
 def _week_sum(key: str, scale: float = 1.0) -> Callable[[GarminData], Any]:
@@ -139,14 +141,14 @@ def _week_minutes(data: GarminData) -> float:
 def _week_attrs(data: GarminData) -> dict[str, Any] | None:
     acts = _this_week(data)
     if not acts:
-        return {"week_start": _week_start().date().isoformat(), "activities": []}
+        return {"week_start": _week_start(data).date().isoformat(), "activities": []}
     return {
-        "week_start": _week_start().date().isoformat(),
+        "week_start": _week_start(data).date().isoformat(),
         "activities": [
             {
                 "name": a.get("activityName"),
                 "type": dig(a, "activityType", "typeKey"),
-                "start": (activity_start(a) or _week_start()).isoformat(),
+                "start": (activity_start(a) or _week_start(data)).isoformat(),
             }
             for a in acts
         ],

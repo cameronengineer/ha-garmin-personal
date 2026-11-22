@@ -55,6 +55,7 @@ class GarminData:
     fitness_age: dict[str, Any] | None = None
     hr_zones: list[dict[str, Any]] = field(default_factory=list)
     weight_goal: dict[str, Any] | None = None
+    profile: dict[str, Any] | None = None
 
     token_expires_at: datetime | None = None
     slow_updated_at: datetime | None = None
@@ -155,6 +156,7 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
             "fitness_age": lambda: api.async_get_fitness_age(today),
             "hr_zones": api.async_get_heart_rate_zones,
             "weight_goal": lambda: api.async_get_weight_goal(today, today),
+            "profile": api.async_get_profile_settings,
         }
 
     async def _async_fetch(
@@ -164,7 +166,9 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
         for name, call in calls.items():
             try:
                 result = await call()
-            except GarminAuthError:
+            except (GarminAuthError, GarminRateLimitError):
+                # Auth: needs the user. Rate limit: stop and back off until the
+                # next update rather than firing the rest of the batch.
                 raise
             except GarminApiError as err:
                 _LOGGER.debug("Garmin %s update failed: %s", name, err)
