@@ -26,7 +26,7 @@ from .const import (
     VO2_LOOKBACK_DAYS,
     WEIGHT_LOOKBACK_DAYS,
 )
-from .parsing import latest_weigh_in
+from .parsing import dig, latest_weigh_in
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,7 +69,10 @@ class GarminData:
 
 
 # Fields that belong to one calendar day and must not survive midnight.
-_DAY_FIELDS = ("heart_rate", "sleep", "hrv", "body_battery", "spo2", "food", "menstrual")
+# Sleep and HRV aren't here: they describe "last night", which stays true
+# until the next night is synced (the API returns an empty record or 204
+# for today until then), so they're replaced only by real new data.
+_DAY_FIELDS = ("heart_rate", "body_battery", "spo2", "food", "menstrual")
 
 
 class GarminCoordinator(DataUpdateCoordinator[GarminData]):
@@ -174,7 +177,12 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
                 _LOGGER.debug("Garmin %s update failed: %s", name, err)
                 data.errors[name] = str(err)
                 continue
-            if name == "weigh_in":
+            if name == "sleep" and not dig(result, "sleepTimeSeconds"):
+                # Empty skeleton (not synced yet): keep the last real night.
+                result = data.sleep
+            elif name == "hrv" and not dig(result, "hrvSummary"):
+                result = data.hrv
+            elif name == "weigh_in":
                 # An empty window shouldn't erase a weigh-in we already know about.
                 result = latest_weigh_in(result) or data.weigh_in
             elif name == "activities" and not result:

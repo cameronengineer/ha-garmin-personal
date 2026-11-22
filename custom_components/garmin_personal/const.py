@@ -40,6 +40,9 @@ DEFAULT_SCAN_INTERVAL: Final = timedelta(minutes=15)
 MIN_SCAN_INTERVAL_MINUTES: Final = 5
 MAX_SCAN_INTERVAL_MINUTES: Final = 240
 SLOW_DATA_INTERVAL: Final = timedelta(hours=1)
+
+# A heart-rate reading older than this isn't shown as the current value.
+HEART_RATE_MAX_AGE: Final = timedelta(hours=1)
 # VO2 max, fitness age, heart-rate zones and weight goal change rarely.
 DAILY_DATA_INTERVAL: Final = timedelta(hours=6)
 

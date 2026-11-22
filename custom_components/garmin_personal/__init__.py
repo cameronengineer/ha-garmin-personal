@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -41,3 +41,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConfigEntry) -> bo
 async def async_unload_entry(hass: HomeAssistant, entry: GarminConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: GarminConfigEntry) -> None:
+    """Clear this account's repair notice when the integration is removed."""
+    ir.async_delete_issue(hass, DOMAIN, f"key_expiring_{entry.entry_id}")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -27,6 +27,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .const import HEART_RATE_MAX_AGE
 from .coordinator import GarminConfigEntry, GarminCoordinator, GarminData
 from .entity import account_id, device_info
 from .parsing import (
@@ -53,6 +54,40 @@ from .parsing import (
 )
 
 BPM = "bpm"
+
+# Attribute names that change often or hold lists; kept out of history.
+ACTIVITY_ATTRIBUTES = (
+    "activity_id",
+    "activity_type",
+    "start_time",
+    "duration_minutes",
+    "distance_km",
+    "calories",
+    "average_hr",
+    "max_hr",
+    "elevation_gain_m",
+    "steps",
+    "aerobic_training_effect",
+    "anaerobic_training_effect",
+    "training_effect_label",
+    "training_load",
+    "body_battery_impact",
+    "moderate_intensity_minutes",
+    "vigorous_intensity_minutes",
+    "personal_record",
+    *(f"minutes_in_hr_zone_{zone}" for zone in range(1, 6)),
+)
+# Sleep score components as the live API names them.
+SLEEP_SCORE_ATTRIBUTES = (
+    "overall",
+    "totalDuration",
+    "stress",
+    "awakeCount",
+    "remPercentage",
+    "restlessness",
+    "lightPercentage",
+    "deepPercentage",
+)
 GRAMS = UnitOfMass.GRAMS
 BREATHS_PER_MIN = "br/min"
 HRV_UNIT = "ms"
@@ -66,6 +101,10 @@ class GarminSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[GarminData], Any]
     attrs_fn: Callable[[GarminData], dict[str, Any] | None] | None = None
+    # Totals that restart each "day" or "week": reported as TOTAL with a
+    # last_reset, so a value that dips (a deleted food, a revised step count)
+    # isn't mistaken for a reset and double-counted in statistics.
+    reset: str | None = None
 
 
 def _summary(*path: str | int) -> Callable[[GarminData], Any]:
@@ -156,8 +195,15 @@ def _week_attrs(data: GarminData) -> dict[str, Any] | None:
 
 
 def _latest_hr(data: GarminData) -> float | None:
+    """Latest heart rate, or None once it's too old to call 'current'.
+
+    The watch only uploads when it syncs, so the newest reading can be hours
+    old; showing it as the live value would be misleading.
+    """
     reading = latest_reading(dig(data.heart_rate, "heartRateValues"))
-    return reading[1] if reading else None
+    if not reading or dt_util.utcnow() - reading[0] > HEART_RATE_MAX_AGE:
+        return None
+    return reading[1]
 
 
 def _latest_hr_attrs(data: GarminData) -> dict[str, Any] | None:
@@ -247,7 +293,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         key="steps",
         translation_key="steps",
         native_unit_of_measurement="steps",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("movement", "steps", "value")),
         attrs_fn=_steps_attrs,
     ),
@@ -258,14 +305,16 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.METERS,
         suggested_unit_of_measurement=UnitOfLength.KILOMETERS,
         suggested_display_precision=2,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("movement", "steps", "distanceInMeters")),
     ),
     GarminSensorEntityDescription(
         key="floors_ascended",
         translation_key="floors_ascended",
         native_unit_of_measurement="floors",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(_summary("movement", "floorsAscended", "value")),
     ),
@@ -274,7 +323,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="calories_total",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("calories", "burnedTotal")),
     ),
     GarminSensorEntityDescription(
@@ -282,7 +332,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="calories_active",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("calories", "burnedActive")),
     ),
     GarminSensorEntityDescription(
@@ -290,7 +341,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="calories_resting",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(_summary("calories", "burnedResting")),
     ),
@@ -299,7 +351,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="intensity_minutes_moderate",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("intensityMinutes", "moderate")),
     ),
     GarminSensorEntityDescription(
@@ -307,7 +360,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="intensity_minutes_vigorous",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         value_fn=_non_negative(_summary("intensityMinutes", "vigorous")),
     ),
     GarminSensorEntityDescription(
@@ -315,7 +369,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="hydration",
         device_class=SensorDeviceClass.VOLUME,
         native_unit_of_measurement=UnitOfVolume.MILLILITERS,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(_summary("hydration", "consumedInFractionalMl")),
     ),
@@ -613,7 +668,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         key="workouts_this_week",
         translation_key="workouts_this_week",
         native_unit_of_measurement="workouts",
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL,
+        reset="week",
         value_fn=lambda data: len(_this_week(data)),
         attrs_fn=_week_attrs,
     ),
@@ -623,7 +679,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         suggested_display_precision=0,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL,
+        reset="week",
         value_fn=_week_minutes,
     ),
     GarminSensorEntityDescription(
@@ -633,7 +690,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.METERS,
         suggested_unit_of_measurement=UnitOfLength.KILOMETERS,
         suggested_display_precision=1,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL,
+        reset="week",
         value_fn=_week_sum("distance"),
     ),
     GarminSensorEntityDescription(
@@ -641,8 +699,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="activity_calories_this_week",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        # Energy sensors can't be "measurement"; this one resets every Monday.
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="week",
         value_fn=_week_sum("calories"),
     ),
     # ------------------------------------------------- live heart rate / zones
@@ -758,7 +816,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="calories_consumed",
         device_class=SensorDeviceClass.ENERGY,
         native_unit_of_measurement=UnitOfEnergy.KILO_CALORIE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(
             lambda data: (
@@ -784,7 +843,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="carbs_consumed",
         native_unit_of_measurement=GRAMS,
         device_class=SensorDeviceClass.WEIGHT,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "carbs")),
     ),
@@ -793,7 +853,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="protein_consumed",
         native_unit_of_measurement=GRAMS,
         device_class=SensorDeviceClass.WEIGHT,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "protein")),
     ),
@@ -802,7 +863,8 @@ SENSORS: tuple[GarminSensorEntityDescription, ...] = (
         translation_key="fat_consumed",
         native_unit_of_measurement=GRAMS,
         device_class=SensorDeviceClass.WEIGHT,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
+        reset="day",
         entity_registry_enabled_default=False,
         value_fn=_non_negative(lambda data: dig(data.food, "dailyNutritionContent", "fat")),
     ),
@@ -849,6 +911,17 @@ class GarminSensor(CoordinatorEntity[GarminCoordinator], SensorEntity):
     """A single Garmin value."""
 
     _attr_has_entity_name = True
+    # Lists and per-update details are useful on the state but would bloat the
+    # history database if written with every update.
+    _unrecorded_attributes = frozenset(
+        {
+            "events",
+            "activities",
+            "measured_at",
+            *ACTIVITY_ATTRIBUTES,
+            *SLEEP_SCORE_ATTRIBUTES,
+        }
+    )
     entity_description: GarminSensorEntityDescription
 
     def __init__(
@@ -867,6 +940,15 @@ class GarminSensor(CoordinatorEntity[GarminCoordinator], SensorEntity):
     def native_value(self) -> Any:
         """The sensor's current value."""
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def last_reset(self) -> datetime | None:
+        """Start of the day or week a running total belongs to."""
+        if self.entity_description.reset == "day":
+            return dt_util.start_of_local_day()
+        if self.entity_description.reset == "week":
+            return _week_start(self.coordinator.data)
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:

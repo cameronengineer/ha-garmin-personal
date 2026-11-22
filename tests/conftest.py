@@ -165,9 +165,10 @@ DAILY_HEART_RATE: dict[str, Any] = {
         {"index": 1, "key": "heartrate"},
     ],
     "heartRateValues": [
-        [1_795_390_000_000, 61],
-        [1_795_390_120_000, 128],
-        [1_795_390_240_000, None],
+        # Shortly before the tests' frozen time (2026-11-22 09:00 UTC).
+        [1795335480000, 61],
+        [1795335720000, 128],
+        [1795335840000, None],
     ],
 }
 

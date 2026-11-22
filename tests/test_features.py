@@ -308,3 +308,96 @@ def test_latest_vo2_max() -> None:
     assert latest_vo2_max(VO2_MAX, "generic") == 48.0
     assert latest_vo2_max(VO2_MAX, "rowing") is None
     assert latest_vo2_max([], "generic") is None
+
+
+async def test_totals_report_last_reset(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Running totals are TOTAL with a last_reset at local midnight / week start."""
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry)
+    steps = hass.states.get(f"{PREFIX}_steps").attributes
+    assert steps["state_class"] == "total"
+    # Frozen at 09:00 UTC = 01:00 US/Pacific on Sun 22 Nov.
+    assert steps["last_reset"] == "2026-11-22T00:00:00-08:00"
+    week = hass.states.get(f"{PREFIX}_distance_this_week").attributes
+    assert week["state_class"] == "total"
+    assert week["last_reset"] == "2026-11-16T00:00:00-08:00"  # Monday by default
+    assert hass.states.get(f"{PREFIX}_heart_rate").attributes["state_class"] == "measurement"
+    assert "last_reset" not in hass.states.get(f"{PREFIX}_heart_rate").attributes
+
+
+def test_heavy_attributes_not_recorded() -> None:
+    """Lists and per-update details are excluded from the recorder."""
+    from custom_components.garmin_personal.sensor import GarminSensor
+
+    excluded = GarminSensor._unrecorded_attributes
+    for name in ("events", "activities", "measured_at", "activity_id", "overall", "distance_km"):
+        assert name in excluded
+
+
+async def test_sleep_survives_midnight_until_next_sync(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Last night's sleep and HRV stay until a newer night actually syncs."""
+    from .conftest import EMPTY_SLEEP
+
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry, enable_all=False)
+    assert _state(hass, "sleep_duration") == "7.25"
+    assert _state(hass, "hrv_last_night") == "61"
+
+    # Next day, before the watch syncs: empty sleep record, HRV 204.
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, sleep=EMPTY_SLEEP, hrv_status=204)
+    freezer.tick(timedelta(hours=24))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert _state(hass, "sleep_duration") == "7.25"
+    assert _state(hass, "hrv_last_night") == "61"
+
+    # The new night syncs: it replaces the old one.
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, sleep={**DAILY_SLEEP, "sleepTimeSeconds": 28_800})
+    freezer.tick(timedelta(hours=2))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert _state(hass, "sleep_duration") == "8.0"
+
+
+async def test_stale_heart_rate_is_unknown(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """A heart-rate reading over an hour old isn't shown as current."""
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry, enable_all=False)
+    assert _state(hass, "heart_rate") == "128"  # reading is ~38 min old
+
+    freezer.tick(timedelta(minutes=30))  # same data, now ~68 min old
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert _state(hass, "heart_rate") == "unknown"
+    assert _state(hass, "heart_rate_zone") == "unknown"
+
+
+async def test_removing_entry_clears_repair(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Deleting the integration doesn't leave a 'key expiring' notice behind."""
+    from homeassistant.helpers import issue_registry as ir
+
+    from .conftest import make_jwt
+
+    mock_garmin(aioclient_mock, token=make_jwt(lifetime_s=6 * 3600, user_profile_pk=777))
+    await _setup(hass, config_entry, enable_all=False)
+    issue_id = f"key_expiring_{config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+    assert await hass.config_entries.async_remove(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

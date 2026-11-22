@@ -21,7 +21,7 @@ API key in Garmin Connect, paste it into Home Assistant, and that's it.
 > community-built integration that uses Garmin's public Personal API under
 > Garmin's terms.
 
-> **Status: early (v0.1).** Built from Garmin's published OpenAPI spec and
+> **Status: early (v0.3).** Built from Garmin's published OpenAPI spec and
 > [verified against the live API](#verified-against-the-live-api). If a sensor
 > looks wrong for you, run the [smoke test](#checking-against-your-own-account)
 > and open an issue.
@@ -179,8 +179,18 @@ Notes:
 
 - **Daily** values (steps, calories, stress, Body Battery…) are for today in
   Home Assistant's time zone, and reset at midnight.
-- **Sleep** and **HRV** are for the night that ended today. Before you've synced
-  in the morning they show *unknown*.
+- **Sleep** and **HRV** show your most recent night. They keep last night's
+  values until the next night has synced, rather than going blank at midnight.
+- **Heart rate** and **Heart rate zone** show *unknown* once the newest reading
+  is over an hour old (the watch only uploads when it syncs), so a stale value
+  is never presented as current.
+- **Running totals** (steps, calories, intensity minutes, food, and the weekly
+  totals) report Home Assistant's `total` state class with a `last_reset` at
+  local midnight or the start of your Garmin week, so long-term statistics
+  stay correct even if Garmin revises a number down.
+- Lists and per-update details (Body Battery events, this week's workouts,
+  activity details, sleep-score components) are on the state but kept out of
+  Home Assistant's history database.
 - Garmin uses `-1`/`-2` to mean "no reading"; those show as *unknown* rather than
   a misleading number.
 - **Weekly** totals start on the first day of the week set in your Garmin
