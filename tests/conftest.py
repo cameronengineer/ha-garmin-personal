@@ -1,6 +1,7 @@
 """Shared fixtures for Garmin Connect Personal API tests.
 
-All payloads here are synthetic, shaped after Garmin's published OpenAPI spec.
+All payloads here are synthetic, shaped after Garmin's published OpenAPI spec
+and the formats seen from the live API (epoch-ms timestamps, weight in grams).
 They are not real account data.
 """
 
@@ -95,6 +96,17 @@ DAILY_SLEEP: dict[str, Any] = {
     },
 }
 
+# What the live API returns for a day with no sleep recorded yet (HTTP 200).
+EMPTY_SLEEP: dict[str, Any] = {
+    "calendarDate": "2026-11-22",
+    "sleepTimeSeconds": None,
+    "sleepStartTimestampGMT": None,
+    "deviceRemCapable": False,
+    "retro": False,
+    "sleepNeed": {"baseline": 480},
+    "sleepScores": None,
+}
+
 HRV: dict[str, Any] = {
     "hrvSummary": {
         "calendarDate": "2026-11-22",
@@ -110,13 +122,13 @@ WEIGHT: dict[str, Any] = {
         {
             "summaryDate": "2026-11-20",
             "allWeightMetrics": [
-                {"timestampGMT": 1_795_150_000_000, "weight": 80.4, "bmi": 24.1, "bodyFat": 19.5}
+                {"timestampGMT": 1_795_150_000_000, "weight": 80400.0, "bmi": 24.1, "bodyFat": 19.5}
             ],
         },
         {
             "summaryDate": "2026-11-21",
             "allWeightMetrics": [
-                {"timestampGMT": 1_795_240_000_000, "weight": 80.1, "bmi": 24.0, "bodyFat": 19.2}
+                {"timestampGMT": 1_795_240_000_000, "weight": 80100.0, "bmi": 24.0, "bodyFat": 19.2}
             ],
         },
     ]
@@ -126,7 +138,7 @@ ACTIVITIES: list[dict[str, Any]] = [
     {
         "activityId": 12345,
         "activityName": "Morning Run",
-        "activityType": {"typeKey": "running"},
+        "activityType": {"typeId": 1, "typeKey": "running", "parentTypeId": 17},
         "beginTimestamp": 1_795_300_000_000,
         "startTimeGMT": "2026-11-21 06:13:20",
         "duration": 1830.0,

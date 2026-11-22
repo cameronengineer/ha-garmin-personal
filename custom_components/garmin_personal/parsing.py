@@ -73,8 +73,9 @@ def seconds_to_hours(value: Any) -> float | None:
 def weight_kg(value: Any) -> float | None:
     """Return a body weight in kilograms.
 
-    The spec says kilograms; Garmin's older web APIs returned grams. A human
-    body weight above 1000 can only be grams, so convert those.
+    The spec says kilograms, but the live API returns grams (confirmed against
+    a real account, 2026-11). Accept both: a body weight above 1000 can only
+    be grams.
     """
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
         return None
@@ -126,8 +127,13 @@ def latest_weigh_in(weights: dict[str, Any] | None) -> dict[str, Any] | None:
     return best
 
 
+# Labels Garmin uses to mean "no value" (seen live: stress qualifier "unknown").
+_EMPTY_LABELS = {"unknown", "none", "invalid", "null", "n/a"}
+
+
 def lower_label(value: Any) -> str | None:
     """Normalise a Garmin enum-ish label ("BALANCED") for an enum sensor."""
     if not isinstance(value, str) or not value.strip():
         return None
-    return value.strip().lower()
+    label = value.strip().lower()
+    return None if label in _EMPTY_LABELS else label

@@ -18,9 +18,8 @@ API key in Garmin Connect, paste it into Home Assistant, and that's it.
 > Garmin's terms.
 
 > **Status: early (v0.1).** Built from Garmin's published OpenAPI spec and
-> tested against synthetic data shaped after it. A few details the spec leaves
-> open are handled defensively — see [Known unknowns](#known-unknowns). If a
-> sensor looks wrong for you, run the [smoke test](#checking-against-your-own-account)
+> [verified against the live API](#verified-against-the-live-api). If a sensor
+> looks wrong for you, run the [smoke test](#checking-against-your-own-account)
 > and open an issue.
 
 ## Why this and not the older Garmin Connect integration?
@@ -122,7 +121,7 @@ from the device page.
 | HRV last night | ms | yes |
 | HRV 7-day average | ms | yes |
 | HRV status |  | yes |
-| **Weight (latest weigh-in, last 30 days)** | | |
+| **Weight (latest weigh-in, last 12 months)** | | |
 | Weight | kg | yes |
 | BMI |  | — |
 | Body fat | % | — |
@@ -222,19 +221,25 @@ automation:
   name, device IDs, GPS coordinates, location names and sleep notes.
 - To revoke access at any time, delete the key in Garmin Connect.
 
-## Known unknowns
+## Verified against the live API
 
-Garmin's spec is thorough, but a few details can't be confirmed without real
-responses. Each is handled defensively and covered by tests:
+Checked against a real account (November 2026). Where the live API differs
+from Garmin's spec, the integration follows the live behaviour:
 
-| Question | How it's handled |
-|---|---|
-| Sleep timestamps are typed `date-time` but described as "in ms" | Accepts epoch ms, epoch seconds, and ISO strings (with or without `Z`) |
-| Weight is documented in kg; Garmin's older APIs used grams | Values above 1000 are treated as grams |
-| The keys inside `sleepScores` aren't listed | Reads `overall` for the score; exposes every component as attributes |
-| Which JWT claim identifies your account | Tries account-ID claims, then the documented `userProfilePk` from today's summary, then your display name |
-| An endpoint refused for your account (HTTP 403) | Only that sensor group goes *unknown*; you're never asked for a new key unless the key itself is rejected |
-| Rate limits | Conservative two-tier polling; HTTP 429 is reported as a temporary failure |
+| Detail | Spec says | Live API |
+|---|---|---|
+| Access token | JWT, 24 h | Plain-text JWT, exactly 24 h; includes a stable `garmin_guid` claim (used as the account ID) |
+| Wrong or revoked key | — | HTTP 401 from the token endpoint → re-authentication prompt |
+| Sleep timestamps | `date-time`, "in ms" | Epoch milliseconds |
+| Sleep score keys | not listed | `overall`, `totalDuration`, `stress`, `awakeCount`, `remPercentage`, `restlessness`, `lightPercentage`, `deepPercentage` |
+| Weight | kilograms | **grams** (converted to kg) |
+| Day with no sleep yet | — | HTTP 200 with an empty skeleton → sleep sensors show *unknown* |
+| Day with no HRV | 204 | 204 |
+| Stress qualifier with no value | — | the string `"unknown"` → shown as *unknown* |
+| Rate-limit headers | — | none sent |
+
+Still unconfirmed: actual rate limits (none published, none hit at ~200
+requests a day), and the China (`.cn`) server.
 
 ## Checking against your own account
 

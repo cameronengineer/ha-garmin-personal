@@ -19,7 +19,7 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 from custom_components.garmin_personal.const import DOMAIN, TOKEN_PATH
 from custom_components.garmin_personal.sensor import SENSORS
 
-from .conftest import API_KEY, BASE, make_jwt, mock_garmin
+from .conftest import API_KEY, BASE, DAILY_SUMMARY, EMPTY_SLEEP, make_jwt, mock_garmin
 
 PREFIX = "sensor.garmin_test_runner"
 
@@ -110,6 +110,22 @@ async def test_setup_garmin_down_retries(
     aioclient_mock.post(f"{BASE}{TOKEN_PATH}", status=503)
     await _setup(hass, config_entry, ok=False)
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_before_sync_and_unknown_labels(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Before the morning sync: empty sleep skeleton and 'unknown' stress label."""
+    summary = {
+        "data": [{**DAILY_SUMMARY["data"][0], "stress": {"avgLevel": 22, "qualifier": "unknown"}}]
+    }
+    mock_garmin(aioclient_mock, summary=summary, sleep=EMPTY_SLEEP, hrv_status=204)
+    await _setup(hass, config_entry)
+    await _enable_all(hass, config_entry)
+    for name in ("sleep_duration", "sleep_score", "fell_asleep", "deep_sleep", "hrv_last_night"):
+        assert hass.states.get(f"{PREFIX}_{name}").state == "unknown", name
+    assert hass.states.get(f"{PREFIX}_stress_level").state == "unknown"
+    assert hass.states.get(f"{PREFIX}_average_stress").state == "22"
 
 
 async def test_slow_data_is_polled_hourly(

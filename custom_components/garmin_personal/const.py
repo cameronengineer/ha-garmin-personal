@@ -39,7 +39,8 @@ MIN_SCAN_INTERVAL_MINUTES: Final = 5
 MAX_SCAN_INTERVAL_MINUTES: Final = 240
 SLOW_DATA_INTERVAL: Final = timedelta(hours=1)
 
-# How far back to look for the most recent weigh-in.
-WEIGHT_LOOKBACK_DAYS: Final = 30
+# How far back to look for the most recent weigh-in. People without a smart
+# scale weigh in rarely, so a short window leaves the sensor empty.
+WEIGHT_LOOKBACK_DAYS: Final = 365
 
 REQUEST_TIMEOUT_SECONDS: Final = 30

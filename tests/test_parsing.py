@@ -111,4 +111,5 @@ def test_lower_label() -> None:
     """Enum-ish labels are normalised."""
     assert lower_label("BALANCED") == "balanced"
     assert lower_label("  ") is None
+    assert lower_label("unknown") is None  # Garmin's live "no qualifier" value
     assert lower_label(None) is None
