@@ -1,8 +1,10 @@
 # Garmin Connect Personal API for Home Assistant
 
+<!-- ha-marketplace:exclude-start -->
 [![Validate](https://github.com/cameronengineer/ha-garmin-personal/actions/workflows/validate.yml/badge.svg)](https://github.com/cameronengineer/ha-garmin-personal/actions/workflows/validate.yml)
 [![Tests](https://github.com/cameronengineer/ha-garmin-personal/actions/workflows/tests.yml/badge.svg)](https://github.com/cameronengineer/ha-garmin-personal/actions/workflows/tests.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
+<!-- ha-marketplace:exclude-end -->
 
 Bring your Garmin health and fitness data into Home Assistant — 69 sensors
 (steps, live heart rate and zone, stress, Body Battery, sleep and sleep need,
@@ -38,7 +40,19 @@ run both side by side.
 
 ## Installation
 
-### HACS (recommended)
+### Home Assistant 2026.11 and newer (Marketplace)
+
+[![Open in the Marketplace](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cameronengineer&repository=ha-garmin-personal&category=integration)
+
+Or by hand:
+
+1. **Settings → Marketplace →** ⋮ **Add from link**, paste
+   `https://github.com/cameronengineer/ha-garmin-personal`, choose type
+   **Integration**, and **Add**.
+2. Open **Garmin Connect Personal API** in the Marketplace and **Install**.
+3. Restart Home Assistant.
+
+### Older Home Assistant (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add
    `https://github.com/cameronengineer/ha-garmin-personal`, category **Integration**.
@@ -57,7 +71,7 @@ Copy `custom_components/garmin_personal/` into your Home Assistant
 2. **Create Key**, accept the terms, and choose an expiry (30 days, 90 days,
    180 days or 1 year). Copy the key — Garmin only shows it once.
 3. In Home Assistant: **Settings → Devices & services → Add integration →
-   Garmin Connect Personal API**, paste the key, pick your server (Global, or
+   Garmin Connect Personal API** ([open it directly](https://my.home-assistant.io/redirect/config_flow_start/?domain=garmin_personal)), paste the key, pick your server (Global, or
    China for `connect.garmin.cn` accounts).
 
 You'll get one device, named after your Garmin display name, with the sensors,
@@ -365,6 +379,8 @@ Layout:
 | `services.py` | `download_activity` action |
 | `config_flow.py` | Setup, reauth and options flows |
 | `diagnostics.py` | Redacted diagnostics |
+| `translations/en.json` | All UI text (entity names, config flow, action, errors) |
+| `brand/` | The integration's own icon (shown in Settings and the Marketplace) |
 
 ## Acknowledgements
 

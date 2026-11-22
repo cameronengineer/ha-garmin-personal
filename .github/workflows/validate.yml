@@ -26,6 +26,3 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Custom integrations aren't in home-assistant/brands; that check
-          # would always fail for a new domain.
-          ignore: brands
