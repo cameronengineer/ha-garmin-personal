@@ -44,6 +44,15 @@ class GarminRateLimitError(GarminConnectionError):
     """Garmin asked us to slow down (HTTP 429)."""
 
 
+class GarminForbiddenError(GarminApiError):
+    """The key works, but Garmin refused this particular endpoint.
+
+    Deliberately *not* an auth error: a dead key fails at the token endpoint.
+    Treating a per-endpoint refusal as auth failure would trigger a reauth
+    that a new key can't fix, looping the user forever.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class AccessToken:
     """A bearer token and when it stops working."""
@@ -193,7 +202,7 @@ class GarminPersonalApi:
                 # A key that is actually dead fails at the token endpoint instead.
                 continue
             if status in (401, 403):
-                raise GarminAuthError(f"Garmin refused {path} (HTTP {status})")
+                raise GarminForbiddenError(f"Garmin refused {path} (HTTP {status})")
             if status == 429:
                 raise GarminRateLimitError(f"Garmin rate limit hit on {path}")
             if status == 204 or status == 404 or not body:
@@ -205,7 +214,7 @@ class GarminPersonalApi:
                 return json.loads(body)
             except ValueError as err:
                 raise GarminConnectionError(f"{path} returned invalid JSON") from err
-        raise GarminAuthError(f"Garmin refused {path}")  # pragma: no cover
+        raise GarminForbiddenError(f"Garmin refused {path}")  # pragma: no cover
 
     # ------------------------------------------------------------- endpoints
 

@@ -232,7 +232,8 @@ responses. Each is handled defensively and covered by tests:
 | Sleep timestamps are typed `date-time` but described as "in ms" | Accepts epoch ms, epoch seconds, and ISO strings (with or without `Z`) |
 | Weight is documented in kg; Garmin's older APIs used grams | Values above 1000 are treated as grams |
 | The keys inside `sleepScores` aren't listed | Reads `overall` for the score; exposes every component as attributes |
-| Which JWT claim identifies your account | Tries common claims, then falls back to your display name |
+| Which JWT claim identifies your account | Tries account-ID claims, then the documented `userProfilePk` from today's summary, then your display name |
+| An endpoint refused for your account (HTTP 403) | Only that sensor group goes *unknown*; you're never asked for a new key unless the key itself is rejected |
 | Rate limits | Conservative two-tier polling; HTTP 429 is reported as a temporary failure |
 
 ## Checking against your own account

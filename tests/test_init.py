@@ -155,6 +155,33 @@ async def test_partial_failure_keeps_other_sensors(
     assert "sleep" in config_entry.runtime_data.data.errors
 
 
+async def test_forbidden_endpoint_does_not_start_reauth(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Garmin refusing one endpoint must not ask the user for a new key."""
+    aioclient_mock.post(f"{BASE}{TOKEN_PATH}", text=make_jwt(user_profile_pk=777))
+    aioclient_mock.get(f"{BASE}/sleep-service/sleep/dailySleep", status=403, text="")
+    mock_garmin(aioclient_mock)
+    await _setup(hass, config_entry)
+    assert config_entry.state is ConfigEntryState.LOADED
+    flows = hass.config_entries.flow.async_progress()
+    assert not any(f["context"]["source"] == SOURCE_REAUTH for f in flows)
+    assert hass.states.get(f"{PREFIX}_steps").state == "6543"
+    assert "sleep" in config_entry.runtime_data.data.errors
+
+
+async def test_forbidden_summary_is_update_failure(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """If even the summary is refused, retry later rather than reauth."""
+    aioclient_mock.post(f"{BASE}{TOKEN_PATH}", text=make_jwt(user_profile_pk=777))
+    aioclient_mock.get(f"{BASE}/usersummary-service/v2/dailysummaries", status=403, text="")
+    await _setup(hass, config_entry, ok=False)
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    flows = hass.config_entries.flow.async_progress()
+    assert not any(f["context"]["source"] == SOURCE_REAUTH for f in flows)
+
+
 async def test_expiring_key_raises_repair(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
 ) -> None:

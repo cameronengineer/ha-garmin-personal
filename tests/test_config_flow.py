@@ -17,7 +17,7 @@ from custom_components.garmin_personal.const import (
     TOKEN_PATH,
 )
 
-from .conftest import API_KEY, BASE, make_jwt, mock_garmin
+from .conftest import API_KEY, BASE, DAILY_SUMMARY, make_jwt, mock_garmin
 
 
 async def _start(hass: HomeAssistant) -> str:
@@ -54,6 +54,35 @@ async def test_unique_id_falls_back_to_display_name(
     )
     await hass.async_block_till_done()
     assert result["result"].unique_id == "global:test-runner"
+
+
+async def test_unique_id_from_summary_profile_pk(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """With no account claim, the documented userProfilePk is used; sub is ignored."""
+    summary = {"data": [{**DAILY_SUMMARY["data"][0], "userProfilePk": 4242}]}
+    mock_garmin(aioclient_mock, token=make_jwt(sub="key-or-client-id"), summary=summary)
+    flow_id = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {"api_key": API_KEY, CONF_REGION: REGION_GLOBAL}
+    )
+    await hass.async_block_till_done()
+    assert result["result"].unique_id == "global:4242"
+
+
+async def test_profile_forbidden_still_sets_up(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A refused profile endpoint doesn't block setup."""
+    aioclient_mock.get(f"{BASE}/userprofile-service/userprofile/settings", status=403, text="")
+    mock_garmin(aioclient_mock)
+    flow_id = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow_id, {"api_key": API_KEY, CONF_REGION: REGION_GLOBAL}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Garmin Connect"
 
 
 @pytest.mark.parametrize(

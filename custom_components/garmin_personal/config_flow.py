@@ -21,9 +21,16 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from homeassistant.util import dt as dt_util
 import voluptuous as vol
 
-from .api import GarminApiError, GarminAuthError, GarminConnectionError, GarminPersonalApi
+from .api import (
+    GarminApiError,
+    GarminAuthError,
+    GarminConnectionError,
+    GarminForbiddenError,
+    GarminPersonalApi,
+)
 from .const import (
     BASE_URLS,
     CONF_REGION,
@@ -49,19 +56,32 @@ REGION_SELECTOR = SelectSelector(
     )
 )
 
-# Claims that might identify the Garmin account inside the access token.
-_ACCOUNT_CLAIMS = ("user_profile_pk", "userProfilePk", "garmin_guid", "garminGuid", "sub")
+# Claims that might identify the Garmin account inside the access token. Not
+# "sub": it could identify the key rather than the account, which would make
+# every key renewal look like a different account and fail reauth.
+_ACCOUNT_CLAIMS = ("user_profile_pk", "userProfilePk", "garmin_guid", "garminGuid")
 
 
 async def _validate(flow: ConfigFlow, api_key: str, region: str) -> tuple[str, str]:
     """Check the key works. Return (unique_id, title); raise on failure."""
     api = GarminPersonalApi(async_get_clientsession(flow.hass), api_key, BASE_URLS[region])
     token = await api.async_get_token()
-    profile = await api.async_get_profile_settings() or {}
+    try:
+        profile = await api.async_get_profile_settings() or {}
+    except GarminForbiddenError:
+        profile = {}
     display_name = profile.get("displayName")
 
-    # Prefer a stable account identifier over the (user-editable) display name.
+    # Prefer a stable account identifier over the (user-editable) display name:
+    # a claim in the token, then the documented userProfilePk on today's summary.
     unique_id = next((str(token.claims[c]) for c in _ACCOUNT_CLAIMS if token.claims.get(c)), None)
+    if unique_id is None:
+        try:
+            summary = await api.async_get_daily_summary(dt_util.now().date()) or {}
+        except GarminForbiddenError:
+            summary = {}
+        if summary.get("userProfilePk"):
+            unique_id = str(summary["userProfilePk"])
     if unique_id is None:
         unique_id = str(display_name or "account")
     title = f"Garmin {display_name}" if display_name else "Garmin Connect"

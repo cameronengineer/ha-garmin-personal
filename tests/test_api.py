@@ -13,6 +13,7 @@ from custom_components.garmin_personal.api import (
     GarminApiError,
     GarminAuthError,
     GarminConnectionError,
+    GarminForbiddenError,
     GarminPersonalApi,
     GarminRateLimitError,
     decode_jwt_claims,
@@ -138,13 +139,28 @@ async def test_empty_responses(hass: HomeAssistant, aioclient_mock: AiohttpClien
 async def test_get_retries_once_on_401(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
 ) -> None:
-    """A 401 on data gets one retry with a fresh token, then is an auth error."""
+    """A 401 on data gets one retry with a fresh token, then is *not* an auth error.
+
+    The token endpoint accepted the key, so the key is fine; asking the user for
+    a new one would loop forever.
+    """
     aioclient_mock.post(f"{BASE}{TOKEN_PATH}", text=make_jwt())
     aioclient_mock.get(f"{BASE}/userprofile-service/userprofile/settings", status=401)
-    with pytest.raises(GarminAuthError):
+    with pytest.raises(GarminForbiddenError):
         await _api(hass).async_get_profile_settings()
     posts = [c for c in aioclient_mock.mock_calls if c[0] == "POST"]
     assert len(posts) == 2
+
+
+async def test_get_403_is_forbidden_not_auth(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    """A 403 on one endpoint is a per-endpoint refusal, never an auth error."""
+    aioclient_mock.post(f"{BASE}{TOKEN_PATH}", text=make_jwt())
+    aioclient_mock.get(f"{BASE}/userprofile-service/userprofile/settings", status=403)
+    with pytest.raises(GarminForbiddenError) as err:
+        await _api(hass).async_get_profile_settings()
+    assert not isinstance(err.value, GarminAuthError)
 
 
 async def test_get_errors(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:
