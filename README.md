@@ -44,20 +44,22 @@ run both side by side.
 
 [![Open in the Marketplace](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=cameronengineer&repository=ha-garmin-personal&category=integration)
 
-Or by hand:
-
-1. **Settings → Marketplace →** ⋮ **Add from link**, paste
-   `https://github.com/cameronengineer/ha-garmin-personal`, choose type
-   **Integration**, and **Add**.
-2. Open **Garmin Connect Personal API** in the Marketplace and **Install**.
-3. Restart Home Assistant.
+1. **Settings → Marketplace**, search for **Garmin Connect Personal API**, and
+   **Install**.
+2. Restart Home Assistant.
 
 ### Older Home Assistant (HACS)
 
-1. HACS → ⋮ → **Custom repositories** → add
-   `https://github.com/cameronengineer/ha-garmin-personal`, category **Integration**.
-2. Search for **Garmin Connect Personal API** and download it.
-3. Restart Home Assistant.
+1. In HACS, search for **Garmin Connect Personal API** and download it.
+2. Restart Home Assistant.
+
+### If it doesn't show up in search
+
+Add the repository by hand, then install it as above:
+
+- **Marketplace:** ⋮ **Add from link**, paste
+  `https://github.com/cameronengineer/ha-garmin-personal`, type **Integration**.
+- **HACS:** ⋮ **Custom repositories**, add the same URL, category **Integration**.
 
 ### Manual
 
