@@ -407,3 +407,9 @@ session instead of `requests`.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Author
+
+Built by [Cameron Mitchell](https://cameronengineer.com/), an engineer in
+Melbourne, Australia. There's a short write-up of why and how it was built on
+the [project page](https://cameronengineer.com/projects/garmin-home-assistant/).
