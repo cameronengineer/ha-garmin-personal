@@ -46,6 +46,9 @@ class GarminData:
     hrv: dict[str, Any] | None = None
     weigh_in: dict[str, Any] | None = None
     activities: list[dict[str, Any]] = field(default_factory=list)
+    # True once an activities call has succeeded, so an empty list can be told
+    # apart from "not fetched yet".
+    activities_loaded: bool = False
     body_battery: dict[str, Any] | None = None
     spo2: dict[str, Any] | None = None
     food: dict[str, Any] | None = None
@@ -185,8 +188,9 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
             elif name == "weigh_in":
                 # An empty window shouldn't erase a weigh-in we already know about.
                 result = latest_weigh_in(result) or data.weigh_in
-            elif name == "activities" and not result:
-                result = data.activities
+            elif name == "activities":
+                data.activities_loaded = True
+                result = result or data.activities
             setattr(data, name, result)
 
     def _check_key_expiry(self, key_expires_at: datetime | None) -> None:

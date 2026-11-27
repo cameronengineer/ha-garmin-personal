@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import EVENT_TYPE_NEW_ACTIVITY
+from .const import EVENT_TYPE_NEW_ACTIVITY, RECENT_ACTIVITIES_LIMIT
 from .coordinator import GarminConfigEntry, GarminCoordinator
 from .entity import account_id, device_info
 from .parsing import activity_start, activity_summary
@@ -45,19 +45,33 @@ class GarminNewActivityEvent(CoordinatorEntity[GarminCoordinator], EventEntity):
         self._attr_unique_id = f"{account_id(entry)}_new_activity"
         self._attr_device_info = device_info(entry)
         self._seen: set[int] | None = None
+        # Start of the oldest activity in the last full window we were given.
+        self._window_start: datetime | None = None
         self._remember(fire=False)
 
     def _remember(self, *, fire: bool) -> None:
         data = self.coordinator.data
-        if data is None:
+        if data is None or not data.activities_loaded:
+            # No successful activities call yet (it may have failed while the
+            # rest of the update worked): wait, or the first list we get would
+            # all look new.
             return
         current = {a["activityId"]: a for a in data.activities if a.get("activityId")}
         if self._seen is None:
             # First look: everything already there counts as seen.
+            new = []
             self._seen = set(current)
-            return
-        new = [a for aid, a in current.items() if aid not in self._seen]
-        self._seen.update(current)
+        else:
+            new = [a for aid, a in current.items() if aid not in self._seen]
+            self._seen.update(current)
+        # An unseen activity older than the previous full window isn't new: it
+        # slid into view because a more recent one was deleted.
+        window_start = self._window_start
+        if window_start is not None:
+            new = [a for a in new if (activity_start(a) or window_start) >= window_start]
+        starts = [start for a in current.values() if (start := activity_start(a))]
+        full = len(data.activities) >= RECENT_ACTIVITIES_LIMIT
+        self._window_start = min(starts) if full and starts else None
         if not fire:
             return
         # Oldest first, so automations see them in the order they happened.
