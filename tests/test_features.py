@@ -17,7 +17,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.garmin_personal.const import DOMAIN
+from custom_components.garmin_personal.const import DOMAIN, RECENT_ACTIVITIES_LIMIT
 from custom_components.garmin_personal.parsing import heart_rate_zone, latest_vo2_max
 
 from .conftest import ACTIVITIES, BASE, DAILY_SLEEP, VO2_MAX, mock_garmin
@@ -231,6 +231,88 @@ async def test_new_activity_event(
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == fired_at
+
+
+async def _next_hourly_update(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    freezer.tick(timedelta(minutes=65))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+
+
+async def test_new_activity_event_waits_for_first_successful_fetch(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """If the first activities call fails, the first one that works is the baseline."""
+    mock_garmin(aioclient_mock, activities_status=500)
+    await _setup(hass, config_entry, enable_all=False)
+    entity_id = "event.garmin_test_runner_new_activity"
+    assert hass.states.get(entity_id).state == "unknown"
+
+    # Garmin answers again: these activities were there all along, so no event.
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock)
+    await _next_hourly_update(hass, freezer)
+    assert hass.states.get(entity_id).state == "unknown"
+
+    # One that syncs after that does fire.
+    newer = _activity(99, "Evening boxing", datetime(2026, 11, 22, 8, 30, tzinfo=UTC))
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, activities=[newer, *ACTIVITIES])
+    await _next_hourly_update(hass, freezer)
+    assert hass.states.get(entity_id).attributes["name"] == "Evening boxing"
+
+
+async def test_new_activity_event_first_ever_activity(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """An account with no activities yet still fires for its first one."""
+    mock_garmin(aioclient_mock, activities=[])
+    await _setup(hass, config_entry, enable_all=False)
+    entity_id = "event.garmin_test_runner_new_activity"
+    assert hass.states.get(entity_id).state == "unknown"
+
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock)
+    await _next_hourly_update(hass, freezer)
+    assert hass.states.get(entity_id).attributes["name"] == "Morning Run"
+
+
+async def test_new_activity_event_ignores_backfill_after_delete(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+    config_entry: MockConfigEntry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Deleting a recent activity pulls an old one into the window: not new."""
+    start = datetime(2026, 11, 21, 6, 0, tzinfo=UTC)
+    # Newest first, one a day, as the API returns them.
+    history = [
+        _activity(1000 - i, f"Run {i}", start - timedelta(days=i))
+        for i in range(RECENT_ACTIVITIES_LIMIT + 1)
+    ]
+    mock_garmin(aioclient_mock, activities=history[:RECENT_ACTIVITIES_LIMIT])
+    await _setup(hass, config_entry, enable_all=False)
+    entity_id = "event.garmin_test_runner_new_activity"
+    assert hass.states.get(entity_id).state == "unknown"
+
+    # The newest is deleted in Garmin Connect; the 51st slides into the window.
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, activities=history[1:])
+    await _next_hourly_update(hass, freezer)
+    assert hass.states.get(entity_id).state == "unknown"
+
+    # A late sync of an older workout that falls inside the window still fires.
+    late = _activity(2000, "Late sync", start - timedelta(days=3, hours=5))
+    aioclient_mock.clear_requests()
+    mock_garmin(aioclient_mock, activities=[*history[1:4], late, *history[4:50]])
+    await _next_hourly_update(hass, freezer)
+    assert hass.states.get(entity_id).attributes["name"] == "Late sync"
 
 
 def _zip(name: str, payload: bytes) -> bytes:

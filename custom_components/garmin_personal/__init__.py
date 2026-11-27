@@ -35,6 +35,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: GarminConfigEntry) -> bo
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # The first refresh only fetched today's summary. Sleep, activities and the
+    # other slower data (up to 14 more requests) load here, without holding up
+    # the entry or Home Assistant's startup.
+    entry.async_create_background_task(
+        hass, coordinator.async_load_remaining(), f"{DOMAIN} load remaining data"
+    )
     return True
 
 

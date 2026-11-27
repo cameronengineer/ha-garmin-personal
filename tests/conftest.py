@@ -269,6 +269,7 @@ def mock_garmin(
     hrv: Any = HRV,
     hrv_status: int = 200,
     activities: Any = None,
+    activities_status: int = 200,
 ) -> None:
     """Register canned responses for every endpoint the integration calls."""
     aioclient_mock.post(
@@ -287,6 +288,7 @@ def mock_garmin(
     aioclient_mock.get(
         f"{BASE}/activitylist-service/activities/search/activities",
         json=ACTIVITIES if activities is None else activities,
+        status=activities_status,
     )
     aioclient_mock.get(f"{BASE}/wellness-service/wellness/dailyHeartRate", json=DAILY_HEART_RATE)
     aioclient_mock.get(

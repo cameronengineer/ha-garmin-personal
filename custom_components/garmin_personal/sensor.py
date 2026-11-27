@@ -939,7 +939,13 @@ class GarminSensor(CoordinatorEntity[GarminCoordinator], SensorEntity):
     @property
     def native_value(self) -> Any:
         """The sensor's current value."""
-        return self.entity_description.value_fn(self.coordinator.data)
+        data = self.coordinator.data
+        if self.entity_description.reset == "week" and not data.complete:
+            # Activities and the first day of the week aren't in yet: a
+            # passing 0 (or a week starting on the wrong day) would read as a
+            # reset in long-term statistics.
+            return None
+        return self.entity_description.value_fn(data)
 
     @property
     def last_reset(self) -> datetime | None:

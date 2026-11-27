@@ -262,6 +262,9 @@ hammering the API, and Garmin doesn't publish rate limits.
   and cycle data:** at most once an hour.
 - **VO2 max, fitness age, heart-rate zones and weight goal:** every 6 hours.
 - **The activities calendar** only calls Garmin when you open it.
+- **At startup** only today's summary is fetched before the integration
+  loads; everything else follows in the background, so those sensors read
+  *unknown* for a moment after a restart.
 - **Access tokens** last 24 hours and are renewed automatically, an hour early.
 
 That's roughly 400 requests a day at the default setting.
