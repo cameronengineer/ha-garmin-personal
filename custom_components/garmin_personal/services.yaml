@@ -4,6 +4,10 @@ download_activity:
       example: "21234567890"
       selector:
         text:
+    folder:
+      example: "/media/garmin"
+      selector:
+        text:
     config_entry_id:
       selector:
         config_entry:

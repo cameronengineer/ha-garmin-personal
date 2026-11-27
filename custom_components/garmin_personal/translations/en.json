@@ -290,11 +290,15 @@
   "services": {
     "download_activity": {
       "name": "Download activity file",
-      "description": "Saves an activity's original FIT file from Garmin into the garmin_activities folder in your Home Assistant config directory. Returns the saved file paths.",
+      "description": "Saves an activity's original FIT file from Garmin into the garmin_activities folder in your Home Assistant config directory, or into a folder you choose. Returns the saved file paths.",
       "fields": {
         "activity_id": {
           "name": "Activity ID",
           "description": "Which activity to download. Leave empty for the most recent one. The ID is on the Last activity sensor and in each calendar event."
+        },
+        "folder": {
+          "name": "Folder",
+          "description": "Where to save the file instead of garmin_activities, for example /media/garmin to keep it out of the config directory and its backups. Must be a folder Home Assistant may write to (a media folder or one listed in allowlist_external_dirs)."
         },
         "config_entry_id": {
           "name": "Garmin account",
@@ -312,6 +316,9 @@
     },
     "no_activities": {
       "message": "There are no Garmin activities to download yet."
+    },
+    "folder_not_allowed": {
+      "message": "Home Assistant isn't allowed to write to {folder}. Use a media folder or add it to allowlist_external_dirs."
     }
   }
 }

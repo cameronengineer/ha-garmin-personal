@@ -18,6 +18,7 @@ from .api import GarminApiError
 from .const import (
     ATTR_ACTIVITY_ID,
     ATTR_CONFIG_ENTRY_ID,
+    ATTR_FOLDER,
     DOMAIN,
     DOWNLOAD_DIR,
     SERVICE_DOWNLOAD_ACTIVITY,
@@ -28,6 +29,7 @@ DOWNLOAD_SCHEMA = vol.Schema(
     {
         vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
         vol.Optional(ATTR_ACTIVITY_ID): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional(ATTR_FOLDER): cv.string,
     }
 )
 
@@ -91,6 +93,18 @@ async def _download_activity(call: ServiceCall) -> ServiceResponse:
             None,
         )
 
+    folder = Path(hass.config.path(DOWNLOAD_DIR))
+    if custom := call.data.get(ATTR_FOLDER):
+        # Relative to the config directory unless absolute, and only somewhere
+        # Home Assistant is allowed to write (allowlist_external_dirs, media).
+        folder = Path(hass.config.path(custom))
+        if not await hass.async_add_executor_job(hass.config.is_allowed_path, str(folder)):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="folder_not_allowed",
+                translation_placeholders={"folder": str(folder)},
+            )
+
     try:
         archive = await coordinator.api.async_download_activity(activity_id)
     except GarminApiError as err:
@@ -98,7 +112,6 @@ async def _download_activity(call: ServiceCall) -> ServiceResponse:
 
     name = (activity or {}).get("activityName") or "activity"
     stem = f"{activity_id}_{_safe_name(name)}"
-    folder = Path(hass.config.path(DOWNLOAD_DIR))
     paths = await hass.async_add_executor_job(_save, archive, folder, stem)
     return {"activity_id": activity_id, "files": paths}
 
