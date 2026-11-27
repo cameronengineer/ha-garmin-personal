@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
+from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
@@ -16,6 +19,7 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
+from custom_components.garmin_personal.api import GarminPersonalApi
 from custom_components.garmin_personal.const import DOMAIN, TOKEN_PATH
 from custom_components.garmin_personal.sensor import SENSORS
 
@@ -40,6 +44,45 @@ async def _enable_all(hass: HomeAssistant, entry: MockConfigEntry) -> None:
             registry.async_update_entity(ent.entity_id, disabled_by=None)
     await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+async def test_setup_only_waits_for_daily_summary(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, config_entry: MockConfigEntry
+) -> None:
+    """Setup finishes on the daily summary; the slower data follows in the background."""
+    mock_garmin(aioclient_mock)
+    reached = asyncio.Event()
+    release = asyncio.Event()
+    real_get = GarminPersonalApi._get
+
+    async def slow_get(api: GarminPersonalApi, path: str, params: Any = None) -> Any:
+        if "dailysummaries" not in path:
+            reached.set()
+            await release.wait()
+        return await real_get(api, path, params)
+
+    config_entry.add_to_hass(hass)
+    with patch.object(GarminPersonalApi, "_get", slow_get):
+        setup = hass.async_create_task(hass.config_entries.async_setup(config_entry.entry_id))
+        try:
+            # Wait until a call other than the summary is held, then let the
+            # loop settle: setup must already be over by then.
+            await reached.wait()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert setup.done(), "setup is still waiting on calls other than the daily summary"
+            assert config_entry.state is ConfigEntryState.LOADED
+            assert hass.states.get(f"{PREFIX}_steps").state == "6543"
+            # Not fetched yet: unknown rather than an empty week or a stale guess.
+            assert hass.states.get(f"{PREFIX}_sleep_score").state == "unknown"
+            assert hass.states.get(f"{PREFIX}_workouts_this_week").state == "unknown"
+        finally:
+            release.set()
+            await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert hass.states.get(f"{PREFIX}_sleep_score").state == "82"
+    assert hass.states.get(f"{PREFIX}_workouts_this_week").state == "1"
+    assert hass.states.get("event.garmin_test_runner_new_activity").state == "unknown"
 
 
 async def test_setup_and_sensor_values(

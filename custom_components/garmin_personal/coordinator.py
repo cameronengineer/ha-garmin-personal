@@ -66,6 +66,11 @@ class GarminData:
     errors: dict[str, str] = field(default_factory=dict)
 
     @property
+    def complete(self) -> bool:
+        """False until the slower batches have run once (see async_setup_entry)."""
+        return self.slow_updated_at is not None and self.daily_updated_at is not None
+
+    @property
     def activity(self) -> dict[str, Any] | None:
         """The most recent activity."""
         return self.activities[0] if self.activities else None
@@ -97,8 +102,25 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
             update_interval=interval,
         )
         self.api = api
+        self._summary_is_fresh = False
+
+    async def async_load_remaining(self) -> None:
+        """Fetch what the first refresh left out, once setup is done.
+
+        The summary was read a moment ago by the first refresh, so it isn't
+        requested again.
+        """
+        self._summary_is_fresh = True
+        try:
+            await self.async_refresh()
+        finally:
+            self._summary_is_fresh = False
 
     async def _async_update_data(self) -> GarminData:
+        # Setup waits for the first refresh, so that one only makes the call
+        # that has to work. async_setup_entry then runs async_load_remaining
+        # in the background, which brings in everything else.
+        first = self.data is None
         previous = self.data or GarminData()
         now = dt_util.now()
         today = now.date()
@@ -115,17 +137,18 @@ class GarminCoordinator(DataUpdateCoordinator[GarminData]):
 
         try:
             # Today's summary is the one call whose failure fails the update.
-            data.summary = await self.api.async_get_daily_summary(today)
-            await self._async_fetch(
-                data, {"heart_rate": lambda: self.api.async_get_daily_heart_rate(today)}
-            )
-
-            if _due(data.slow_updated_at, now, SLOW_DATA_INTERVAL):
-                await self._async_fetch(data, self._slow_calls(today))
-                data.slow_updated_at = now
-            if _due(data.daily_updated_at, now, DAILY_DATA_INTERVAL):
-                await self._async_fetch(data, self._daily_calls(today))
-                data.daily_updated_at = now
+            if not self._summary_is_fresh:
+                data.summary = await self.api.async_get_daily_summary(today)
+            if not first:
+                await self._async_fetch(
+                    data, {"heart_rate": lambda: self.api.async_get_daily_heart_rate(today)}
+                )
+                if _due(data.slow_updated_at, now, SLOW_DATA_INTERVAL):
+                    await self._async_fetch(data, self._slow_calls(today))
+                    data.slow_updated_at = now
+                if _due(data.daily_updated_at, now, DAILY_DATA_INTERVAL):
+                    await self._async_fetch(data, self._daily_calls(today))
+                    data.daily_updated_at = now
         except GarminAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except GarminRateLimitError as err:
