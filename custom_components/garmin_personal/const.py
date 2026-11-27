@@ -68,6 +68,7 @@ DOWNLOAD_DIR: Final = "garmin_activities"
 SERVICE_DOWNLOAD_ACTIVITY: Final = "download_activity"
 ATTR_ACTIVITY_ID: Final = "activity_id"
 ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
+ATTR_FOLDER: Final = "folder"
 
 EVENT_TYPE_NEW_ACTIVITY: Final = "new_activity"
 
